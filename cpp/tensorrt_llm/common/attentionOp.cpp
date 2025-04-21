@@ -1015,6 +1015,23 @@ int AttentionOp::mlaGeneration(
         size_t const softmax_lse_accum_size = sizeof(float) * ((batch_beam + num_sm_parts) * num_q_heads * s_q);
         size_t const out_accum_size = sizeof(float) * ((batch_beam + num_sm_parts) * num_q_heads * s_q * head_size_v);
 
+        int rank = mTpRank;
+        if(rank == 7)
+        {
+            printf("+++++++++++++++\n");
+            printf("FlashMLA layer_index: %d\n", mLayerIdx);
+            printf("batch_beam: %d\n", batch_beam);
+            printf("acc_q_len: %d\n", params.acc_q_len);
+            printf("s_q: %d\n", s_q);
+            printf("predicted_tokens_per_seq: %d\n", mMLAParams.predicted_tokens_per_seq);
+            printf("num_sm_parts: %d\n", num_sm_parts);
+
+            printf("---------------\n");
+        }
+
+
+
+
         float* softmax_lse_ptr
             = reinterpret_cast<float*>(nextWorkspacePtr(workspace_byte_ptr, offset, softmax_lse_size));
         float* softmax_lse_accum_ptr

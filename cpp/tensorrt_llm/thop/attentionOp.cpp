@@ -128,6 +128,51 @@ public:
         torch::optional<torch::Tensor> tile_scheduler_metadata,
         torch::optional<torch::Tensor> num_splits) const override
     {
+        int rank = at::cuda::current_device();
+        if (rank == 7) {
+            printf("***************\n");
+            printf("layer_index: %d\n", op.mLayerIdx);
+            printf("num_seqs: %d\n", num_seqs);
+            printf("seq_offset: %d\n", seq_offset);
+            printf("sequence_length shape: [");
+            for (int i = 0; i < sequence_length.dim(); ++i) {
+                printf("%d", sequence_length.size(i));
+                if (i < sequence_length.dim() - 1) printf(", ");
+            }
+            printf("]\n");
+            printf("sequence_length values: [");
+            auto seq_length_data = sequence_length.data_ptr<int32_t>();
+            auto seq_length_size = sequence_length.size(0);
+            for (int i = 0; i < seq_length_size; ++i) {
+                printf("%d", seq_length_data[i]);
+                if (i < seq_length_size - 1) printf(", ");
+            }
+            printf("]\n");
+            if (tile_scheduler_metadata.has_value()) {
+                auto sizes = tile_scheduler_metadata.value().sizes();
+                printf("tile_scheduler_metadata shape: [");
+                for (int i = 0; i < sizes.size(); ++i) {
+                    printf("%ld", sizes[i]);
+                    if (i < sizes.size() - 1) printf(", ");
+                }
+                printf("]\n");
+            } else {
+                printf("tile_scheduler_metadata shape: None\n");
+            }
+            if (num_splits.has_value()) {
+                auto sizes = num_splits.value().sizes();
+                printf("num_splits shape: [");
+                for (int i = 0; i < sizes.size(); ++i) {
+                    printf("%ld", sizes[i]);
+                    if (i < sizes.size() - 1) printf(", ");
+                }
+                printf("]\n");
+            } else {
+                printf("num_splits shape: None\n");
+            }
+            printf("###############\n");
+        }
+
         auto stream = at::cuda::getCurrentCUDAStream(qkv.get_device());
         T* attention_input = static_cast<T*>(qkv.slice(0, token_offset).data_ptr());
         AttentionOutT* context_buf = static_cast<AttentionOutT*>(output.slice(0, token_offset).data_ptr());
