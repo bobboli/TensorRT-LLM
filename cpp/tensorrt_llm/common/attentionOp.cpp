@@ -1051,6 +1051,20 @@ int AttentionOp::mlaGeneration(
         // metadata should only be init once per iter, to fix later
         get_mla_metadata_func(mlaMetaDataParams, stream);
 
+        int rank = mTpRank;
+        if(rank == 7)
+        {
+            printf("+++++++++++++++\n");
+            printf("FlashMLA layer_index: %d\n", mLayerIdx);
+            printf("batch_beam: %d\n", batch_beam);
+            printf("acc_q_len: %d\n", params.acc_q_len);
+            printf("s_q: %d\n", s_q);
+            printf("predicted_tokens_per_seq: %d\n", mMLAParams.predicted_tokens_per_seq);
+            printf("num_sm_parts: %d\n", num_sm_parts);
+
+            printf("---------------\n");
+        }
+
         Flash_fwd_mla_params flashMlaParams{};
         flashMlaParams.b = batch_beam;
         flashMlaParams.seqlen_q = ngroups * s_q;
