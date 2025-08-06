@@ -12,10 +12,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import array
 import ctypes
 import os
 import platform
+import socket
+import struct
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -44,6 +49,134 @@ def _check_cu_result(cu_func_ret):
         if cu_func_ret != cuda.CUresult.CUDA_SUCCESS:
             raise RuntimeError(cu_func_ret)
         return None
+
+
+class FDExchangeServer(threading.Thread):
+    """Unix Domain Socket server for file descriptor exchange."""
+
+    def __init__(self, rank, socket_dir="/tmp"):
+        super().__init__(daemon=True)
+        self.rank = rank
+        self.pid = os.getpid()
+        self.socket_path = f"{socket_dir}/tensorrt-llm-{self.pid}.sock"
+        self.server_socket = None
+        self.running = False
+        self.fd_map = {}  # Maps requester_rank -> fd to send
+
+    def register_fd(self, requester_rank, fd):
+        """Register a file descriptor to be sent to a specific rank."""
+        self.fd_map[requester_rank] = fd
+
+    def run(self):
+        """Run the Unix Domain Socket server."""
+        # Remove existing socket file if it exists
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+
+        # Create Unix Domain Socket
+        self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server_socket.bind(self.socket_path)
+        self.server_socket.listen(5)
+        self.server_socket.settimeout(1.0)  # 1 second timeout for accept
+
+        self.running = True
+
+        while self.running:
+            try:
+                client_socket, _ = self.server_socket.accept()
+                self._handle_client(client_socket)
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self.running:
+                    logger.warning(f"FD exchange server error: {e}")
+
+    def _handle_client(self, client_socket):
+        """Handle a client connection requesting a file descriptor."""
+        try:
+            # Receive request (expecting rank number)
+            data = client_socket.recv(4)
+            if len(data) < 4:
+                return
+
+            requester_rank = struct.unpack("i", data)[0]
+
+            # Get the file descriptor to send
+            fd_to_send = self.fd_map.get(requester_rank)
+            if fd_to_send is None:
+                client_socket.send(b"NO_FD")
+                return
+
+            # Send the file descriptor using SCM_RIGHTS
+            fds = array.array("i", [fd_to_send])
+            ancdata = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds)]
+            client_socket.sendmsg([b"FD_OK"], ancdata)
+
+        finally:
+            client_socket.close()
+
+    def stop(self):
+        """Stop the server and cleanup."""
+        self.running = False
+        if self.server_socket:
+            self.server_socket.close()
+        # Clean up socket file
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+
+
+def exchange_fd_with_peer(peer_pid, local_fd, my_rank, max_retries=10):
+    """
+    Exchange file descriptors with a peer process using Unix Domain Sockets.
+
+    Args:
+        peer_pid: PID of the peer process
+        local_fd: Local file descriptor to send
+        my_rank: My rank in the communication group
+        max_retries: Maximum connection attempts
+
+    Returns:
+        Remote file descriptor received from peer
+    """
+    socket_path = f"/tmp/tensorrt-llm-{peer_pid}.sock"
+
+    # Retry connection with exponential backoff
+    for attempt in range(max_retries):
+        try:
+            client_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client_socket.connect(socket_path)
+            break
+        except (FileNotFoundError, ConnectionRefusedError):
+            if attempt < max_retries - 1:
+                time.sleep(0.1 * (2**attempt))  # Exponential backoff
+            else:
+                raise RuntimeError(
+                    f"Failed to connect to peer {peer_pid} after {max_retries} attempts"
+                )
+
+    try:
+        # Send our rank
+        client_socket.send(struct.pack("i", my_rank))
+
+        # Receive response with file descriptor
+        data, ancdata, flags, addr = client_socket.recvmsg(1024, socket.CMSG_SPACE(4))
+
+        if data == b"NO_FD":
+            raise RuntimeError(f"Peer {peer_pid} has no FD for rank {my_rank}")
+        elif data != b"FD_OK":
+            raise RuntimeError(f"Unexpected response from peer {peer_pid}: {data}")
+
+        # Extract file descriptor from ancillary data
+        for cmsg_level, cmsg_type, cmsg_data in ancdata:
+            if cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
+                fd_array = array.array("i")
+                fd_array.frombytes(cmsg_data)
+                return fd_array[0]
+
+        raise RuntimeError("No file descriptor received in ancillary data")
+
+    finally:
+        client_socket.close()
 
 
 class MnnvlMemory:
@@ -195,39 +328,98 @@ class MnnvlMemory:
         ):
             all_handles_data = comm.allgather(exported_fabric_handle.data)
         else:
+            # Unix Domain Socket approach for better compatibility and safety
             all_handles_data = comm.allgather(exported_fabric_handle)
             all_pids = comm.allgather(os.getpid())
-            libc = ctypes.CDLL(None, use_errno=True)
-            syscall = libc.syscall
-            SYS_pidfd_open = 434
-            SYS_pidfd_getfd = 438
-            pidfds = []
-            for i, pid in enumerate(all_pids):
-                pidfd = syscall(SYS_pidfd_open, pid, 0)
-                if pidfd < 0:
-                    err = ctypes.get_errno()
-                    raise RuntimeError(
-                        f"pidfd_open({pid}) failed with errno {err}: {os.strerror(err)}"
-                    )
-                pidfds.append(pidfd)
 
-            remote_fds = []
-            for i, (pidfd, fd) in enumerate(zip(pidfds, all_handles_data)):
-                remote_fd = syscall(SYS_pidfd_getfd, pidfd, fd, 0)
-                if remote_fd < 0:
-                    err = ctypes.get_errno()
-                    error_msg = f"pidfd_getfd(pidfd={pidfd}, fd={fd}) failed with errno {err}: {os.strerror(err)}."
-                    if err == 1:  # EPERM
-                        error_msg += (
-                            " Permission denied. If running in a container, try adding --cap-add=SYS_PTRACE "
-                            "to your docker run command."
+            # Check if we should use the legacy pidfd_open approach
+            use_pidfd = os.environ.get("TENSORRT_LLM_USE_PIDFD", "0") == "1"
+
+            if use_pidfd:
+                # Legacy pidfd_open approach (requires Linux 5.3+)
+                logger.warning(
+                    "Using legacy pidfd_open approach."
+                    "Consider switching to Unix Domain Sockets for better compatibility."
+                )
+                libc = ctypes.CDLL(None, use_errno=True)
+                syscall = libc.syscall
+                SYS_pidfd_open = 434
+                SYS_pidfd_getfd = 438
+                pidfds = []
+                for i, pid in enumerate(all_pids):
+                    pidfd = syscall(SYS_pidfd_open, pid, 0)
+                    if pidfd < 0:
+                        err = ctypes.get_errno()
+                        raise RuntimeError(
+                            f"pidfd_open({pid}) failed with errno {err}: {os.strerror(err)}"
                         )
-                    else:
-                        error_msg += " This may be due to kernel version (requires Linux 5.6+)."
-                    raise RuntimeError(error_msg)
-                remote_fds.append(remote_fd)
+                    pidfds.append(pidfd)
 
-            all_handles_data = remote_fds
+                remote_fds = []
+                for i, (pidfd, fd) in enumerate(zip(pidfds, all_handles_data)):
+                    remote_fd = syscall(SYS_pidfd_getfd, pidfd, fd, 0)
+                    if remote_fd < 0:
+                        err = ctypes.get_errno()
+                        error_msg = f"pidfd_getfd(pidfd={pidfd}, fd={fd}) failed with errno {err}: {os.strerror(err)}."
+                        if err == 1:  # EPERM
+                            error_msg += (
+                                " Permission denied. If running in a container, try adding --cap-add=SYS_PTRACE "
+                                "to your docker run command."
+                            )
+                        else:
+                            error_msg += " This may be due to kernel version (requires Linux 5.6+)."
+                        raise RuntimeError(error_msg)
+                    remote_fds.append(remote_fd)
+
+                all_handles_data = remote_fds
+            else:
+                # Unix Domain Socket approach (recommended)
+                # Start Unix Domain Socket server for this rank
+                fd_server = FDExchangeServer(comm_rank)
+
+                # Register file descriptors for all other ranks
+                for rank in range(comm_size):
+                    if rank != comm_rank:
+                        fd_server.register_fd(rank, all_handles_data[comm_rank])
+
+                fd_server.start()
+
+                # Give servers time to start up
+                comm.Barrier()  # Synchronize all ranks
+
+                # Exchange file descriptors with all peers
+                remote_fds = []
+                for i, (peer_pid, peer_fd) in enumerate(zip(all_pids, all_handles_data)):
+                    if i == comm_rank:
+                        # For our own rank, just use the local FD
+                        remote_fds.append(peer_fd)
+                    else:
+                        # Exchange FD with peer using Unix Domain Socket
+                        try:
+                            remote_fd = exchange_fd_with_peer(
+                                peer_pid,
+                                all_handles_data[comm_rank],  # Our FD to send
+                                comm_rank,  # Our rank
+                                max_retries=20,  # More retries for distributed setup
+                            )
+                            remote_fds.append(remote_fd)
+                        except Exception as e:
+                            # Enhanced error message
+                            error_msg = (
+                                f"Failed to exchange file descriptor with rank {i} (PID {peer_pid}): {str(e)}. "
+                                "Unix Domain Socket approach requires all processes to be on the same node. "
+                                "For multi-node setups, consider using fabric handles. "
+                                "To fall back to pidfd_open, set TENSORRT_LLM_USE_PIDFD=1."
+                            )
+                            raise RuntimeError(error_msg)
+
+                # Clean up the server
+                fd_server.stop()
+
+                # Synchronize before proceeding
+                comm.Barrier()
+
+                all_handles_data = remote_fds
         # all_handles_data like b'\x00\x00\x00 \x00\x00\x00\x00\x8f\xec\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\t\x00\x00\x00\x00\x00\x1d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # noqa: E501
         # can use buf = memoryview(data) to import if using plain buffer for data.
 
