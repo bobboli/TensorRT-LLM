@@ -35,8 +35,8 @@ struct PayloadDescriptor
 {
     void const* src_data;      // Source data pointer [local_num_tokens, elements_per_token]
     void* recv_buffer;         // Contiguous receive buffer for this payload [ep_size * max_tokens * elements_per_token]
-    size_t element_size;       // Size of each element in bytes
-    size_t elements_per_token; // Number of elements per token (e.g., hidden_size, top_k)
+    int element_size;          // Size of each element in bytes
+    int elements_per_token;    // Number of elements per token (e.g., hidden_size, top_k)
 };
 
 // Dispatch phase parameters
@@ -62,6 +62,9 @@ struct MoeA2ADispatchParams
     // Generic payloads
     int num_payloads;                         // Number of different payload types
     PayloadDescriptor payloads[kMaxPayloads]; // Array of payload descriptors
+
+    // Receive buffers - [ep_size][kMaxPayloads]
+    void* (*recv_buffers)[kMaxPayloads];      // Per-rank receive buffers for each payload
 
     // Communication workspace
     void* workspace;    // IPC workspace for communication
@@ -111,19 +114,10 @@ void moe_a2a_dispatch_op(MoeA2ADispatchParams const& params);
 void moe_a2a_combine_op(MoeA2ACombineParams const& params);
 
 // Buffer layout helper functions
-inline __host__ __device__ size_t get_rank_buffer_offset(int rank_id, size_t buffer_size_per_rank)
+inline __host__ __device__ int get_rank_buffer_offset(int rank_id, int buffer_size_per_rank)
 {
     return rank_id * buffer_size_per_rank;
 }
 
-inline __host__ __device__ void* get_payload_ptr_in_recv_buffer(void* recv_buffer, int rank_id, int token_position,
-    size_t max_tokens_per_rank, size_t elements_per_token, size_t element_size)
-{
-    char* base = static_cast<char*>(recv_buffer);
-    // Buffer layout: [rank0_tokens][rank1_tokens]...[rankN_tokens]
-    size_t rank_offset = rank_id * max_tokens_per_rank * elements_per_token * element_size;
-    size_t token_offset = token_position * elements_per_token * element_size;
-    return base + rank_offset + token_offset;
-}
 
 } // namespace tensorrt_llm::kernels::moe_a2a
