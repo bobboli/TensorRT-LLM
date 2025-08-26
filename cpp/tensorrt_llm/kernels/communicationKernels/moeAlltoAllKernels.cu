@@ -73,9 +73,7 @@ __device__ void warp_vectorized_copy(void* dst, void const* src, int size, int l
 // ============================================================================
 
 __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [local_num_tokens, top_k]
-    void const* src_data_ptrs[kMaxPayloads],                                // Array of source data pointers
-    void* (*recv_buffers)[kMaxPayloads],                                    // [ep_size][kMaxPayloads] - pointer to array of payload buffers per rank
-    int const payload_bytes_per_token[kMaxPayloads],                                // Array of bytes per token
+    const KernelArrays arrays,                                                     // Struct containing all arrays
     int num_payloads,                                                       // Number of payloads
     int max_tokens_per_rank,                                                // Maximum tokens per rank
     int* recv_counters, // [ep_size] atomic counters - each rank tracks its own
@@ -93,7 +91,7 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
 
     if (local_token_idx >= local_num_tokens)
     {
-        return;
+         return;
     }
 
     uint64_t already_copied = 0;
@@ -104,16 +102,20 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
 
         if (already_copied & (1ULL << target_rank)) continue;
 
-        int dst_token_idx = atomicAdd(&recv_counters[target_rank], 1);
-        void* (&recv_buffer_ptrs)[kMaxPayloads] = recv_buffers[target_rank];
-
+        // Only one thread per warp should increment the counter
+        int dst_token_idx;
+        if (lane_id == 0) {
+            dst_token_idx = atomicAdd(&recv_counters[target_rank], 1);
+        }
+        // Broadcast the index to all threads in the warp
+        dst_token_idx = __shfl_sync(0xffffffff, dst_token_idx, 0);
 
         for (int payload_idx = 0; payload_idx < num_payloads; payload_idx++)
         {
-            uint8_t const* src_data = static_cast<uint8_t const*>(src_data_ptrs[payload_idx]);
-            uint8_t* dst_data = static_cast<uint8_t*>(recv_buffer_ptrs[payload_idx]);
+            uint8_t const* src_data = static_cast<uint8_t const*>(arrays.src_data_ptrs[payload_idx]);
+            uint8_t* dst_data = static_cast<uint8_t*>(arrays.recv_buffers[target_rank][payload_idx]);
             
-            int bytes_per_token = payload_bytes_per_token[payload_idx];
+            int bytes_per_token = arrays.payload_bytes_per_token[payload_idx];
 
             uint8_t* dst_ptr = dst_data + dst_token_idx * bytes_per_token;
             uint8_t const* src_ptr = src_data + local_token_idx * bytes_per_token;
@@ -143,23 +145,27 @@ void moe_a2a_dispatch_op(MoeA2ADispatchParams const& params)
     constexpr int warps_per_block = block_size / warp_size; // 8 warps per block
     int grid_size = (params.local_num_tokens + warps_per_block - 1) / warps_per_block;
 
-    // Prepare arrays from payload descriptors
-    void const* h_src_data_ptrs[kMaxPayloads];
-    int h_payload_bytes_per_token[kMaxPayloads];
-
+    // Prepare kernel arrays struct
+    KernelArrays kernel_arrays = {}; // Zero-initialize
+    
+    // Fill source data pointers and payload sizes
     for (int i = 0; i < params.num_payloads; i++)
     {
-        h_src_data_ptrs[i] = params.payloads[i].src_data;
-        h_payload_bytes_per_token[i] = params.payloads[i].element_size * params.payloads[i].elements_per_token;
+        kernel_arrays.src_data_ptrs[i] = params.payloads[i].src_data;
+        kernel_arrays.payload_bytes_per_token[i] = params.payloads[i].element_size * params.payloads[i].elements_per_token;
     }
     
-    // Need to prepare recv_buffers - this should be passed in params
-    // For now, assume params has recv_buffers field
-    void* (*recv_buffers)[kMaxPayloads] = params.recv_buffers;
-
+    // Fill receive buffer pointers
+    for (int rank = 0; rank < params.ep_size; rank++)
+    {
+        for (int payload = 0; payload < params.num_payloads; payload++)
+        {
+            kernel_arrays.recv_buffers[rank][payload] = params.recv_buffers[rank][payload];
+        }
+    }
 
     moeA2ADispatchKernel<<<grid_size, block_size, 0, params.stream>>>(params.token_selected_experts,
-        h_src_data_ptrs, recv_buffers, h_payload_bytes_per_token, params.num_payloads,
+        kernel_arrays, params.num_payloads,
         params.max_tokens_per_rank, params.recv_counters, params.local_num_tokens, params.ep_rank, params.ep_size, params.top_k);
 }
 

@@ -29,6 +29,7 @@ static constexpr int kMaxExperts = 256; // Maximum number of experts per rank
 static constexpr int kMaxTopK = 8;      // Maximum top-k experts per token
 static constexpr int kWarpSize = 32;
 static constexpr int kMaxPayloads = 8;  // Maximum number of different payload types
+static constexpr int kMaxRanks = 64;    // Maximum supported EP size
 
 // Describes a single payload type to be communicated
 struct PayloadDescriptor
@@ -37,6 +38,14 @@ struct PayloadDescriptor
     void* recv_buffer;         // Contiguous receive buffer for this payload [ep_size * max_tokens * elements_per_token]
     int element_size;          // Size of each element in bytes
     int elements_per_token;    // Number of elements per token (e.g., hidden_size, top_k)
+};
+
+// Kernel arrays packed into a struct for device access
+struct KernelArrays
+{
+    void const* src_data_ptrs[kMaxPayloads];                    // Array of source data pointers
+    void* recv_buffers[kMaxRanks][kMaxPayloads];               // 2D array of receive buffer pointers
+    int payload_bytes_per_token[kMaxPayloads];                 // Bytes per token for each payload
 };
 
 // Dispatch phase parameters
@@ -64,7 +73,7 @@ struct MoeA2ADispatchParams
     PayloadDescriptor payloads[kMaxPayloads]; // Array of payload descriptors
 
     // Receive buffers - [ep_size][kMaxPayloads]
-    void* (*recv_buffers)[kMaxPayloads];      // Per-rank receive buffers for each payload
+    void* recv_buffers[kMaxRanks][kMaxPayloads];      // Per-rank receive buffers for each payload
 
     // Communication workspace
     void* workspace;    // IPC workspace for communication

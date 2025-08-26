@@ -112,27 +112,9 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
     
     // Setup receive buffer pointers from unified workspace
     std::vector<PayloadDescriptor> payloadDescriptors;
-    std::vector<std::array<void*, kMaxPayloads>> h_recv_buffers(epSize);
     
     // Get base workspace pointer
     auto* workspace_ptr = workspace.data_ptr<uint8_t>();
-    
-    // Calculate raw pointers for each rank's buffers
-    for (int rank = 0; rank < epSize; rank++)
-    {
-        // Each rank gets workspace[rank] - calculate base pointer
-        auto* rank_workspace = workspace_ptr + (rank * workspace.stride(0));
-        int64_t offset = 0;
-        
-        for (int payload_idx = 0; payload_idx < static_cast<int>(inputPayloads.size()); payload_idx++)
-        {
-            // Store buffer pointer for kernel
-            h_recv_buffers[rank][payload_idx] = rank_workspace + offset;
-            
-            // Update offset for next payload
-            offset += payloadByteSizes[payload_idx];
-        }
-    }
     
     // Setup payload descriptors for source data
     for (int i = 0; i < static_cast<int>(inputPayloads.size()); i++)
@@ -153,7 +135,22 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
     params.token_selected_experts = tokenSelectedExperts.data_ptr<int32_t>();
     params.num_payloads = static_cast<int>(payloadDescriptors.size());
     std::copy(payloadDescriptors.begin(), payloadDescriptors.end(), &params.payloads[0]);
-    params.recv_buffers = reinterpret_cast<void*(*)[kMaxPayloads]>(h_recv_buffers.data());
+    // Calculate and store recv buffer pointers directly in params
+    for (int rank = 0; rank < epSize; rank++)
+    {
+        // Each rank gets workspace[rank] - calculate base pointer
+        auto* rank_workspace = workspace_ptr + (rank * workspace.stride(0));
+        int64_t offset = 0;
+        
+        for (int payload_idx = 0; payload_idx < static_cast<int>(inputPayloads.size()); payload_idx++)
+        {
+            // Store buffer pointer for kernel
+            params.recv_buffers[rank][payload_idx] = rank_workspace + offset;
+            
+            // Update offset for next payload
+            offset += payloadByteSizes[payload_idx];
+        }
+    }
     params.max_tokens_per_rank = static_cast<int>(maxTokensPerRank);
     params.recv_counters = recvCounters.data_ptr<int>();
     params.local_num_tokens = static_cast<int>(localNumTokens);
