@@ -127,8 +127,8 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
         payloadDescriptors.push_back(desc);
     }
 
-    // Create recv_counters tensor
-    torch::Tensor recvCounters = torch::zeros({epSize}, tokenSelectedExperts.options().dtype(torch::kInt32));
+    // Create send_counters tensor - tracks number of tokens sent to each target rank
+    torch::Tensor sendCounters = torch::zeros({epSize}, tokenSelectedExperts.options().dtype(torch::kInt32));
 
     // Setup dispatch parameters
     MoeA2ADispatchParams params{};
@@ -152,7 +152,7 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
         }
     }
     params.max_tokens_per_rank = static_cast<int>(maxTokensPerRank);
-    params.recv_counters = recvCounters.data_ptr<int>();
+    params.send_counters = sendCounters.data_ptr<int>();
     params.local_num_tokens = static_cast<int>(localNumTokens);
     params.ep_size = static_cast<int>(epSize);
     params.ep_rank = static_cast<int>(epRank);
@@ -186,7 +186,7 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
         offset += payloadByteSizes[payload_idx];
     }
 
-    return std::make_tuple(std::move(recvBuffers), recvCounters);
+    return std::make_tuple(std::move(recvBuffers), sendCounters);
 }
 
 // TODO(trtllm-team): Implement moeA2ACombineOp for the combine phase (pull back payload with reduction)

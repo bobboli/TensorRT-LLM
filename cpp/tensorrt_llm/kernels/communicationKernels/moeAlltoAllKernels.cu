@@ -76,7 +76,7 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
     const KernelArrays arrays,                                                     // Struct containing all arrays
     int num_payloads,                                                       // Number of payloads
     int max_tokens_per_rank,                                                // Maximum tokens per rank
-    int* recv_counters, // [ep_size] atomic counters - each rank tracks its own
+    int* send_counters, // [ep_size] atomic counters - each rank tracks its own
     int local_num_tokens, int rank_id, int ep_size, int top_k)
 {
     // Constants
@@ -105,7 +105,7 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
         // Only one thread per warp should increment the counter
         int dst_token_idx;
         if (lane_id == 0) {
-            dst_token_idx = atomicAdd(&recv_counters[target_rank], 1);
+            dst_token_idx = atomicAdd(&send_counters[target_rank], 1);
         }
         // Broadcast the index to all threads in the warp
         dst_token_idx = __shfl_sync(0xffffffff, dst_token_idx, 0);
@@ -166,7 +166,7 @@ void moe_a2a_dispatch_op(MoeA2ADispatchParams const& params)
 
     moeA2ADispatchKernel<<<grid_size, block_size, 0, params.stream>>>(params.token_selected_experts,
         kernel_arrays, params.num_payloads,
-        params.max_tokens_per_rank, params.recv_counters, params.local_num_tokens, params.ep_rank, params.ep_size, params.top_k);
+        params.max_tokens_per_rank, params.send_counters, params.local_num_tokens, params.ep_rank, params.ep_size, params.top_k);
 }
 
 } // namespace tensorrt_llm::kernels::moe_a2a

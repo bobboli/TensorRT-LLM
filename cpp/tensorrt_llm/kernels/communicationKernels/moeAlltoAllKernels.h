@@ -77,7 +77,7 @@ struct MoeA2ADispatchParams
 
     // Communication workspace
     void* workspace;    // IPC workspace for communication
-    int* recv_counters; // [ep_size] atomic counters for each recv rank - tracks tokens received from each rank
+    int* send_counters; // [ep_size] atomic counters - tracks tokens sent to each target rank
 
     cudaStream_t stream;
 };
