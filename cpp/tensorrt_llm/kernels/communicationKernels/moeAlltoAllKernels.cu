@@ -73,15 +73,27 @@ __device__ void warp_vectorized_copy(void* dst, void const* src, int size, int l
 // ============================================================================
 
 __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [local_num_tokens, top_k]
-    const KernelArrays arrays,                                                     // Struct containing all arrays
+    const KernelPointers ptrs,                                                     // Struct containing all kernel pointers
     int num_payloads,                                                       // Number of payloads
     int max_tokens_per_rank,                                                // Maximum tokens per rank
     int* send_counters, // [ep_size] atomic counters - each rank tracks its own
+    int* local_token_counter, // Atomic counter for completed tokens on this rank
     int local_num_tokens, int rank_id, int ep_size, int top_k)
 {
     // Constants
     constexpr int WARPS_PER_BLOCK = 8; // 256 threads / 32 threads per warp
     constexpr int WARP_SIZE = 32;
+
+    // Initialize completion_flags and local_token_counter at kernel start
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+        // Thread 0 of block 0 initializes everything
+        *local_token_counter = 0;
+        for (int i = 0; i < ep_size; i++) {
+            ptrs.completion_flags[rank_id][i] = 0;
+        }
+    }
+    // Ensure initialization is complete before proceeding
+    __threadfence();
 
     // Determine which warp this thread belongs to and which token it handles
     int warp_id_in_block = threadIdx.x / WARP_SIZE;
@@ -112,10 +124,10 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
 
         for (int payload_idx = 0; payload_idx < num_payloads; payload_idx++)
         {
-            uint8_t const* src_data = static_cast<uint8_t const*>(arrays.src_data_ptrs[payload_idx]);
-            uint8_t* dst_data = static_cast<uint8_t*>(arrays.recv_buffers[target_rank][payload_idx]);
+            uint8_t const* src_data = static_cast<uint8_t const*>(ptrs.src_data_ptrs[payload_idx]);
+            uint8_t* dst_data = static_cast<uint8_t*>(ptrs.recv_buffers[target_rank][payload_idx]);
             
-            int bytes_per_token = arrays.payload_bytes_per_token[payload_idx];
+            int bytes_per_token = ptrs.payload_bytes_per_token[payload_idx];
 
             uint8_t* dst_ptr = dst_data + dst_token_idx * bytes_per_token;
             uint8_t const* src_ptr = src_data + local_token_idx * bytes_per_token;
@@ -124,6 +136,32 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
         }
 
         already_copied |= 1ULL << target_rank;
+    }
+
+    // Finished sending this token. Check if we're the last token to complete.
+    if (lane_id == 0) {
+        int completed_tokens = atomicAdd(local_token_counter, 1) + 1;
+        
+        if (completed_tokens == local_num_tokens) {
+            // This warp processed the last token! Ensure all writes are visible
+            __threadfence_system();
+            
+            // Signal completion to all ranks
+            for (int target_rank = 0; target_rank < ep_size; target_rank++) {
+                // Set flag in target rank's completion flags array at position rank_id
+                ptrs.completion_flags[target_rank][rank_id] = 1;
+            }
+            
+            // Now wait for all ranks to complete their dispatch
+            for (int source_rank = 0; source_rank < ep_size; source_rank++) {
+                // Busy wait until source_rank signals completion
+                // Check our rank's completion flags array at position source_rank
+                volatile int* flag_ptr = &ptrs.completion_flags[rank_id][source_rank];
+                while (*flag_ptr == 0) {
+                    // Spin wait - using volatile to prevent caching
+                }
+            }
+        }
     }
 }
 
@@ -145,28 +183,31 @@ void moe_a2a_dispatch_op(MoeA2ADispatchParams const& params)
     constexpr int warps_per_block = block_size / warp_size; // 8 warps per block
     int grid_size = (params.local_num_tokens + warps_per_block - 1) / warps_per_block;
 
-    // Prepare kernel arrays struct
-    KernelArrays kernel_arrays = {}; // Zero-initialize
+    // Prepare kernel pointers struct
+    KernelPointers kernel_ptrs = {}; // Zero-initialize
     
     // Fill source data pointers and payload sizes
     for (int i = 0; i < params.num_payloads; i++)
     {
-        kernel_arrays.src_data_ptrs[i] = params.payloads[i].src_data;
-        kernel_arrays.payload_bytes_per_token[i] = params.payloads[i].element_size * params.payloads[i].elements_per_token;
+        kernel_ptrs.src_data_ptrs[i] = params.payloads[i].src_data;
+        kernel_ptrs.payload_bytes_per_token[i] = params.payloads[i].element_size * params.payloads[i].elements_per_token;
     }
     
-    // Fill receive buffer pointers
+    // Fill receive buffer pointers and completion flags
     for (int rank = 0; rank < params.ep_size; rank++)
     {
         for (int payload = 0; payload < params.num_payloads; payload++)
         {
-            kernel_arrays.recv_buffers[rank][payload] = params.recv_buffers[rank][payload];
+            kernel_ptrs.recv_buffers[rank][payload] = params.recv_buffers[rank][payload];
         }
+        kernel_ptrs.completion_flags[rank] = params.completion_flags[rank];
     }
 
     moeA2ADispatchKernel<<<grid_size, block_size, 0, params.stream>>>(params.token_selected_experts,
-        kernel_arrays, params.num_payloads,
-        params.max_tokens_per_rank, params.send_counters, params.local_num_tokens, params.ep_rank, params.ep_size, params.top_k);
+        kernel_ptrs, params.num_payloads,
+        params.max_tokens_per_rank, params.send_counters, 
+        params.local_token_counter, 
+        params.local_num_tokens, params.ep_rank, params.ep_size, params.top_k);
 }
 
 } // namespace tensorrt_llm::kernels::moe_a2a

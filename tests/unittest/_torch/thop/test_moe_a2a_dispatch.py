@@ -51,7 +51,8 @@ def compute_nvfp4_workspace_size(ep_size: int, max_tokens_per_rank: int,
     sf_size = ep_size * max_tokens_per_rank * num_scaling_factors * 4  # float32
     experts_size = ep_size * max_tokens_per_rank * top_k * 4  # int32
     final_scales_size = ep_size * max_tokens_per_rank * top_k * 4  # float32
-    return packed_tokens_size + sf_size + experts_size + final_scales_size
+    completion_flags_size = ep_size * 4  # int32, one flag per rank
+    return packed_tokens_size + sf_size + experts_size + final_scales_size + completion_flags_size
 
 
 def generate_token_selected_experts(local_num_tokens: int, ep_size: int,

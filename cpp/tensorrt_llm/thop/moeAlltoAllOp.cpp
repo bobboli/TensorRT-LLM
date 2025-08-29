@@ -107,10 +107,14 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
         totalBytesNeeded += bytesPerPayload;
     }
     
-    // Validate workspace size
+    // Validate workspace size - must include space for completion_flags
+    int64_t completionFlagsBytes = epSize * sizeof(int);  // Each rank has epSize flags
+    int64_t totalBytesWithFlags = totalBytesNeeded + completionFlagsBytes;
     int64_t sizePerRank = workspace.size(1);  // size in bytes since dtype is uint8
-    TORCH_CHECK(sizePerRank >= totalBytesNeeded, 
-        "Workspace size per rank insufficient for receive buffers");
+    TORCH_CHECK(sizePerRank >= totalBytesWithFlags, 
+        "Workspace size per rank insufficient for receive buffers and completion_flags. "
+        "Need ", totalBytesWithFlags, " bytes (", totalBytesNeeded, " for payloads + ", 
+        completionFlagsBytes, " for completion_flags), but got ", sizePerRank);
     
     // Setup receive buffer pointers from unified workspace
     std::vector<PayloadDescriptor> payloadDescriptors;
@@ -131,6 +135,11 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
 
     // Create send_counters tensor - tracks number of tokens sent to each target rank
     torch::Tensor sendCounters = torch::zeros({epSize}, tokenSelectedExperts.options().dtype(torch::kInt32));
+    
+    // Create local_token_counter - tracks completed tokens on this rank
+    torch::Tensor localTokenCounter = torch::zeros({1}, tokenSelectedExperts.options().dtype(torch::kInt32));
+
+    // TODO: Combine these two tensors into one, use empty and init in kernel.
 
     // Setup dispatch parameters
     MoeA2ADispatchParams params{};
@@ -152,9 +161,13 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
             // Update offset for next payload
             offset += payloadByteSizes[payload_idx];
         }
+        
+        // Set completion_flags pointer for this rank (after all payloads)
+        params.completion_flags[rank] = reinterpret_cast<int*>(rank_workspace + offset);
     }
     params.max_tokens_per_rank = static_cast<int>(maxTokensPerRank);
     params.send_counters = sendCounters.data_ptr<int>();
+    params.local_token_counter = localTokenCounter.data_ptr<int>();
     params.local_num_tokens = static_cast<int>(localNumTokens);
     params.ep_size = static_cast<int>(epSize);
     params.ep_rank = static_cast<int>(epRank);

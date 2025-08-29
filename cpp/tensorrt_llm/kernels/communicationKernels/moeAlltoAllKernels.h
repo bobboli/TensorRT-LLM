@@ -40,12 +40,13 @@ struct PayloadDescriptor
     int elements_per_token;    // Number of elements per token (e.g., hidden_size, top_k)
 };
 
-// Kernel arrays packed into a struct for device access
-struct KernelArrays
+// Kernel pointers packed into a struct for device access
+struct KernelPointers
 {
     void const* src_data_ptrs[kMaxPayloads];                    // Array of source data pointers
     void* recv_buffers[kMaxRanks][kMaxPayloads];               // 2D array of receive buffer pointers
     int payload_bytes_per_token[kMaxPayloads];                 // Bytes per token for each payload
+    int* completion_flags[kMaxRanks];                          // Per-rank completion flags pointers
 };
 
 // Dispatch phase parameters
@@ -74,10 +75,15 @@ struct MoeA2ADispatchParams
 
     // Receive buffers - [ep_size][kMaxPayloads]
     void* recv_buffers[kMaxRanks][kMaxPayloads];      // Per-rank receive buffers for each payload
+    int* completion_flags[kMaxRanks];  // Per-rank completion flags pointers
+
 
     // Communication workspace
     void* workspace;    // IPC workspace for communication
     int* send_counters; // [ep_size] atomic counters - tracks tokens sent to each target rank
+    
+    // Completion tracking
+    int* local_token_counter;          // Atomic counter for completed tokens on this rank
 
     cudaStream_t stream;
 };
