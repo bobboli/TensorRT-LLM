@@ -80,7 +80,9 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
     }
 
     // Validate workspace - unified virtual memory [epSize, sizePerRank]
-    CHECK_INPUT(workspace, torch::kUInt8);
+    CHECK_TH_CUDA(workspace);
+    CHECK_TYPE(workspace, torch::kUInt8);
+    // Don't check contiguous - MnnvlMemory creates strided tensors for multi-GPU
     TORCH_CHECK(workspace.dim() == 2, "workspace must be a 2D tensor of shape [epSize, sizePerRank]");
     TORCH_CHECK(workspace.size(0) == epSize, "workspace first dimension must equal epSize");
     
