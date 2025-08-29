@@ -86,10 +86,13 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
 
     // Initialize completion_flags and local_token_counter at kernel start
     if (blockIdx.x == 0 && threadIdx.x == 0) {
+        printf("Rank %d: Initializing with %d local tokens\n", rank_id, local_num_tokens);
         // Thread 0 of block 0 initializes everything
         *local_token_counter = 0;
         for (int i = 0; i < ep_size; i++) {
-            ptrs.completion_flags[rank_id][i] = 0;
+            // Use uncached store for initialization
+            int* flag_addr = &ptrs.completion_flags[rank_id][i];
+            asm volatile("st.global.wt.u32 [%0], %1;" :: "l"(flag_addr), "r"(0));
         }
     }
     // Ensure initialization is complete before proceeding
@@ -143,23 +146,31 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
         int completed_tokens = atomicAdd(local_token_counter, 1) + 1;
         
         if (completed_tokens == local_num_tokens) {
+            printf("Rank %d: Last token completed! Signaling to other ranks\n", rank_id);
             // This warp processed the last token! Ensure all writes are visible
             __threadfence_system();
             
             // Signal completion to all ranks
             for (int target_rank = 0; target_rank < ep_size; target_rank++) {
                 // Set flag in target rank's completion flags array at position rank_id
-                ptrs.completion_flags[target_rank][rank_id] = 1;
+                int* flag_addr = &ptrs.completion_flags[target_rank][rank_id];
+                printf("Rank %d: Setting completion flag for target rank %d at address %p\n", 
+                       rank_id, target_rank, flag_addr);
+                // Use uncached store for cross-GPU visibility
+                asm volatile("st.global.wt.u32 [%0], %1;" :: "l"(flag_addr), "r"(1));
             }
             
             // Now wait for all ranks to complete their dispatch
             for (int source_rank = 0; source_rank < ep_size; source_rank++) {
                 // Busy wait until source_rank signals completion
                 // Check our rank's completion flags array at position source_rank
-                volatile int* flag_ptr = &ptrs.completion_flags[rank_id][source_rank];
-                while (*flag_ptr == 0) {
-                    // Spin wait - using volatile to prevent caching
-                }
+                int* flag_ptr = &ptrs.completion_flags[rank_id][source_rank];
+                int flag_value = 0;
+                do {
+                    // Use uncached load for cross-GPU visibility
+                    asm volatile("ld.global.cv.u32 %0, [%1];" : "=r"(flag_value) : "l"(flag_ptr));
+                    // printf("rank %d spin wait for source rank %d. lane_id %d flag_value %d\n", rank_id, source_rank, lane_id, flag_value);
+                } while (flag_value == 0);
             }
         }
     }
