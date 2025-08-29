@@ -88,7 +88,6 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
     if (blockIdx.x == 0 && threadIdx.x == 0) {
         printf("Rank %d: Initializing with %d local tokens\n", rank_id, local_num_tokens);
         // Thread 0 of block 0 initializes everything
-        *local_token_counter = 0;
         for (int i = 0; i < ep_size; i++) {
             // Use uncached store for initialization
             int* flag_addr = &ptrs.completion_flags[rank_id][i];
@@ -107,6 +106,11 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
     if (local_token_idx >= local_num_tokens)
     {
          return;
+    }
+    
+    // Debug: Track token processing
+    if (lane_id == 0) {
+        printf("###Rank %d: Processing token %d\n", rank_id, local_token_idx);
     }
 
     uint64_t already_copied = 0;
@@ -144,6 +148,8 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
     // Finished sending this token. Check if we're the last token to complete.
     if (lane_id == 0) {
         int completed_tokens = atomicAdd(local_token_counter, 1) + 1;
+        printf("+++Rank %d: Token %d completed, total completed: %d/%d\n", 
+               rank_id, local_token_idx, completed_tokens, local_num_tokens);
         
         if (completed_tokens == local_num_tokens) {
             printf("Rank %d: Last token completed! Signaling to other ranks\n", rank_id);
@@ -154,7 +160,7 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
             for (int target_rank = 0; target_rank < ep_size; target_rank++) {
                 // Set flag in target rank's completion flags array at position rank_id
                 int* flag_addr = &ptrs.completion_flags[target_rank][rank_id];
-                printf("Rank %d: Setting completion flag for target rank %d at address %p\n", 
+                printf("***Rank %d: Setting completion flag for target rank %d at address %p\n",
                        rank_id, target_rank, flag_addr);
                 // Use uncached store for cross-GPU visibility
                 asm volatile("st.global.wt.u32 [%0], %1;" :: "l"(flag_addr), "r"(1));
