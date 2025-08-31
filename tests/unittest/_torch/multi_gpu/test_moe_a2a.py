@@ -171,11 +171,9 @@ class TestMoEAlltoAll:
         (4, [32, 32, 32, 32], 8),  # Four ranks with top_k = 8
         
         # Edge cases
-        # (1, [64], 2),            # Single rank  # TODO: fix (needs mpi_pool_executor to support 1 worker)
         (4, [1, 1, 1, 1], 2),      # Four ranks with single token per rank
-        # (3, [100, 200, 150], 2), # Three ranks with non-power-of-2 ep_size (needs mpi_pool_executor to support 3 workers)
     ], indirect=["mpi_pool_executor"])
-    def test_dispatch_multi_gpu(self, mpi_pool_executor, local_num_tokens_list, top_k):
+    def test_dispatch(self, mpi_pool_executor, local_num_tokens_list, top_k):
         """Test MoE A2A dispatch with MNNVL across multiple GPUs"""
 
         try:
@@ -188,8 +186,7 @@ class TestMoEAlltoAll:
         assert ep_size == len(local_num_tokens_list), "ep_size does not match local_num_tokens_list"
         
         # Skip if not enough GPUs
-        if torch.cuda.device_count() < ep_size:
-            pytest.skip(f"Need at least {ep_size} GPUs, found {torch.cuda.device_count()}")
+        assert torch.cuda.device_count() >= ep_size, f"Need at least {ep_size} GPUs, found {torch.cuda.device_count()}"
         
         hidden_size = 1024
         num_experts_per_rank = 8
