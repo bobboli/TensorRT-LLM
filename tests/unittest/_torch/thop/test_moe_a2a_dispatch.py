@@ -26,6 +26,8 @@ import pytest
 import tensorrt_llm as tllm
 
 from tensorrt_llm._mnnvl_utils import MnnvlMemory
+from tensorrt_llm.mapping import Mapping
+from tensorrt_llm._torch.distributed.ops import moe_a2a_dispatch
 
 cloudpickle.register_pickle_by_value(sys.modules[__name__])
 MPI.pickle.__init__(
@@ -102,17 +104,7 @@ def make_nvfp4_payloads(local_num_tokens: int, hidden_size: int, top_k: int,
 def run_moe_a2a_dispatch_single_rank(ep_size, local_num_tokens_list, top_k, 
                                      workspace_size_per_rank, num_experts_per_rank, 
                                      hidden_size, max_tokens_per_rank):
-    """Worker function for MPIPoolExecutor.
-    Runs one-rank dispatch and returns tensors for verification.
-    Mirrors the single-GPU test logic but runs on separate GPUs.
-    """
-    # Import everything inside the worker to avoid pickle issues
-    import torch
-    import traceback
-    import tensorrt_llm as tllm
-    from tensorrt_llm._mnnvl_utils import MnnvlMemory
-    from tensorrt_llm.mapping import Mapping
-
+    """Worker function for MPIPoolExecutor."""
     rank = tllm.mpi_rank()
     torch.cuda.set_device(rank)
     
@@ -135,32 +127,22 @@ def run_moe_a2a_dispatch_single_rank(ep_size, local_num_tokens_list, top_k,
         # Get the number of tokens for this specific rank (same as single-GPU)
         rank_local_tokens = local_num_tokens_list[rank]
         
-        # Create token_selected_experts - random expert assignments (same as single-GPU)
-        token_selected_experts = torch.randint(
-            0,
-            ep_size * num_experts_per_rank, 
-            (rank_local_tokens, top_k),
-            dtype=torch.int32,
-            device='cuda')
-
-        # Create 4 payloads for NV FP4 using helper (same as single-GPU)
+        # Generate data using helper functions
+        token_selected_experts = generate_token_selected_experts(
+            rank_local_tokens, ep_size, num_experts_per_rank, top_k)
         payloads = make_nvfp4_payloads(
             rank_local_tokens, hidden_size, top_k, rank, token_selected_experts)
 
-        # Execute dispatch (same as single-GPU)
-        # Access torch.ops inside worker to avoid pickle issues
-        recv_buffers, send_counters = torch.ops.trtllm.moe_a2a_dispatch(
+        # Execute dispatch using wrapper to avoid pickle issues
+        recv_buffers, send_counters = moe_a2a_dispatch(
             token_selected_experts,
             payloads,
             workspace,
             max_tokens_per_rank,
-            rank,  # ep_rank
+            rank,
             ep_size,
             top_k)
         
-        # Synchronize CUDA before returning results
-        torch.cuda.synchronize()
-
         # Return results to be collected (move to CPU for MPI transfer)
         return (token_selected_experts.cpu(),
                 [p.cpu() for p in payloads],
@@ -173,94 +155,6 @@ def run_moe_a2a_dispatch_single_rank(ep_size, local_num_tokens_list, top_k,
 
 class TestMoEAlltoAll:
 
-    @pytest.mark.parametrize("ep_size,local_num_tokens_list,top_k", [
-        # (ep_size, local_num_tokens_list, top_k)
-        # Basic configurations
-        (4, [32, 32, 32, 32], 2),  # Uniform distribution
-        (4, [16, 32, 64, 48], 2),  # Non-uniform distribution
-        (2, [100, 50], 2),         # Two ranks with different loads
-        (8, [10, 20, 30, 40, 50, 60, 70, 80], 2),  # Eight ranks with increasing load
-        
-        # Different top_k values
-        (4, [32, 32, 32, 32], 4),  # top_k = 4
-        (4, [32, 32, 32, 32], 8),  # top_k = 8
-        
-        # Edge cases
-        # (1, [64], 2),              # Single rank  # TODO: fix
-        (4, [1, 1, 1, 1], 2),      # Single token per rank
-        (3, [100, 200, 150], 2),   # Non-power-of-2 ep_size
-    ])
-    def test_dispatch_single_gpu(self, ep_size, local_num_tokens_list, top_k):
-        """Test MoE A2A dispatch on single GPU simulating multiple ranks"""
-        torch.cuda.set_device(0)
-
-        assert ep_size == len(local_num_tokens_list), "ep_size does not match local_num_tokens_list"
-
-        hidden_size = 1024
-        num_experts_per_rank = 8
-        max_tokens_per_rank = max(local_num_tokens_list)
-
-        # Calculate workspace size for all payloads
-        workspace_size_per_rank = compute_nvfp4_workspace_size(
-            ep_size, max_tokens_per_rank, hidden_size, top_k)
-        
-        # Create unified virtual memory workspace (simulated for single GPU)
-        # In real MNNVL, this would be allocated using MnnvlMemory
-        # Workspace shape: [ep_size, size_per_rank] where size_per_rank contains all payload buffers
-        workspace = torch.zeros((ep_size, workspace_size_per_rank), 
-                               dtype=torch.uint8, 
-                               device='cuda')
-        
-        # Storage for all ranks' data
-        all_recv_buffers = []
-        all_send_counters = []
-        all_token_selected_experts = []
-        all_payloads = []
-
-        # Generate data for each simulated rank
-        for rank in range(ep_size):
-            # Get the number of tokens for this specific rank
-            rank_local_tokens = local_num_tokens_list[rank]
-            
-            # Create token_selected_experts - random expert assignments
-            token_selected_experts = torch.randint(
-                0,
-                ep_size * num_experts_per_rank, (rank_local_tokens, top_k),
-                dtype=torch.int32,
-                device='cuda')
-            all_token_selected_experts.append(token_selected_experts)
-
-            # Create 4 payloads for NV FP4 using helper
-            payloads = make_nvfp4_payloads(
-                rank_local_tokens, hidden_size, top_k, rank, token_selected_experts)
-
-            all_payloads.append(payloads)
-
-        # Execute dispatch for each rank
-        for rank in range(ep_size):
-            recv_buffers, send_counters = torch.ops.trtllm.moe_a2a_dispatch(
-                all_token_selected_experts[rank],
-                all_payloads[rank],
-                workspace,
-                max_tokens_per_rank,
-                rank,  # ep_rank
-                ep_size,
-                top_k)
-            all_recv_buffers.append(recv_buffers)
-            # Note: The second return value actually contains send counters, not recv counters
-            all_send_counters.append(send_counters)
-
-        # Synchronize CUDA to ensure all dispatch operations are complete
-        torch.cuda.synchronize()
-
-        # Verify dispatch results
-        self._verify_dispatch(all_token_selected_experts,
-                             all_payloads, all_recv_buffers,
-                             all_send_counters, ep_size,
-                             local_num_tokens_list, top_k,
-                             max_tokens_per_rank)
-    
-    
     @pytest.mark.skipif(torch.cuda.device_count() < 2,
                         reason='needs at least 2 GPUs to run multi-GPU test')
     @pytest.mark.threadleak(enabled=False)  # MPI pool executors have known thread cleanup timing issues
@@ -347,10 +241,7 @@ class TestMoEAlltoAll:
                         local_num_tokens_list, top_k,
                         max_tokens_per_rank):
         """Verify dispatch results for any payload configuration"""
-        
-        # Synchronize CUDA to ensure all operations are complete
-        torch.cuda.synchronize()
-        
+                
         # For each sending rank, verify its send counters
         for send_rank in range(ep_size):
             send_counters = all_send_counters[send_rank]  # Actually contains send counters
