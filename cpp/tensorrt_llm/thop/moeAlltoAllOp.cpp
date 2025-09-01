@@ -47,7 +47,7 @@ namespace
 //
 // Note: token_selected_experts is used for routing but is NOT automatically included as a payload.
 //       If you want to dispatch token_selected_experts, include it explicitly in inputPayloads.
-std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Tensor const& tokenSelectedExperts,
+std::tuple<std::vector<torch::Tensor>, torch::Tensor, torch::Tensor> moeA2ADispatchOp(torch::Tensor const& tokenSelectedExperts,
     std::vector<torch::Tensor> const& inputPayloads, torch::Tensor const& workspace, int64_t maxTokensPerRank, int64_t epRank, int64_t epSize,
     int64_t topK)
 {
@@ -95,8 +95,12 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
     
     for (auto const& payload : inputPayloads)
     {
-        int64_t numel = payload.numel();
-        int elementsPerToken = static_cast<int>(numel / localNumTokens);
+        CHECK_CONTIGUOUS(payload);
+        CHECK_TH_CUDA(payload);
+        TORCH_CHECK(payload.dim() == 2, "payload must be a 2D tensor");
+        TORCH_CHECK(payload.size(0) == localNumTokens, "payload must have the same first dimension as tokenSelectedExperts");
+
+        int elementsPerToken = static_cast<int>(payload.size(1));
         int elementSize = static_cast<int>(payload.dtype().itemsize());
         // Each payload buffer stores data from ALL ranks
         int64_t bytesPerPayload = epSize * maxTokensPerRank * elementsPerToken * elementSize;
@@ -133,41 +137,50 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
         payloadDescriptors.push_back(desc);
     }
 
+    // TODO: Use torch empty to replace initilization
     // Create send_counters tensor - tracks number of tokens sent to each target rank
     torch::Tensor sendCounters = torch::zeros({epSize}, tokenSelectedExperts.options().dtype(torch::kInt32));
-    
     // Create local_token_counter - tracks completed tokens on this rank
     torch::Tensor localTokenCounter = torch::zeros({1}, tokenSelectedExperts.options().dtype(torch::kInt32));
-
-    // TODO: Combine these two tensors into one, use empty and init in kernel.
+    // Create local indices tensor for content verification - tracks destination positions for each source token
+    torch::Tensor sendIndices = torch::full({localNumTokens, epSize}, -1, 
+        tokenSelectedExperts.options().dtype(torch::kInt32));
 
     // Setup dispatch parameters
     MoeA2ADispatchParams params{};
     params.token_selected_experts = tokenSelectedExperts.data_ptr<int32_t>();
-    params.num_payloads = static_cast<int>(payloadDescriptors.size());
+    params.num_payloads = static_cast<int32_t>(payloadDescriptors.size());
     std::copy(payloadDescriptors.begin(), payloadDescriptors.end(), &params.payloads[0]);
     // Calculate and store recv buffer pointers directly in params
-    for (int rank = 0; rank < epSize; rank++)
+    for (int target_rank = 0; target_rank < epSize; target_rank++)
     {
-        // Each rank gets workspace[rank] - calculate base pointer
-        auto* rank_workspace = workspace_ptr + (rank * workspace.stride(0));
+        // Each rank gets workspace[target_rank] - calculate base pointer
+        auto* target_workspace = workspace_ptr + (target_rank * workspace.stride(0));
         int64_t offset = 0;
+        
+        // Debug: print workspace addresses
+        if (epRank == 0) {
+            printf("Rank %d: target_rank %d workspace at %p (base %p + stride %ld * %d)\n",
+                   static_cast<int>(epRank), target_rank, target_workspace, workspace_ptr, 
+                   workspace.stride(0), target_rank);
+        }
         
         for (int payload_idx = 0; payload_idx < static_cast<int>(inputPayloads.size()); payload_idx++)
         {
             // Store buffer pointer for kernel
-            params.recv_buffers[rank][payload_idx] = rank_workspace + offset;
+            params.recv_buffers[target_rank][payload_idx] = target_workspace + offset;
             
             // Update offset for next payload
             offset += payloadByteSizes[payload_idx];
         }
         
         // Set completion_flags pointer for this rank (after all payloads)
-        params.completion_flags[rank] = reinterpret_cast<int*>(rank_workspace + offset);
+        params.completion_flags[target_rank] = reinterpret_cast<int*>(target_workspace + offset);
     }
     params.max_tokens_per_rank = static_cast<int>(maxTokensPerRank);
     params.send_counters = sendCounters.data_ptr<int>();
     params.local_token_counter = localTokenCounter.data_ptr<int>();
+    params.send_indices = sendIndices.data_ptr<int>();
     params.local_num_tokens = static_cast<int>(localNumTokens);
     params.ep_size = static_cast<int>(epSize);
     params.ep_rank = static_cast<int>(epRank);
@@ -189,10 +202,9 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
         auto const& payload = inputPayloads[payload_idx];
         
         // Create tensor view for this payload - contains data from ALL ranks
-        auto numElements = static_cast<int64_t>(epSize * maxTokensPerRank * payloadElementsPerToken[payload_idx]);
         auto recvBuffer = torch::from_blob(
             current_rank_workspace + offset,
-            {numElements},
+            {epSize, maxTokensPerRank, payloadElementsPerToken[payload_idx]},
             payload.options()
         );
         recvBuffers.push_back(recvBuffer);
@@ -201,7 +213,7 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor> moeA2ADispatchOp(torch::Te
         offset += payloadByteSizes[payload_idx];
     }
 
-    return std::make_tuple(std::move(recvBuffers), sendCounters);
+    return std::make_tuple(std::move(recvBuffers), sendCounters, sendIndices);
 }
 
 // TODO(trtllm-team): Implement moeA2ACombineOp for the combine phase (pull back payload with reduction)
@@ -215,7 +227,7 @@ TORCH_LIBRARY_FRAGMENT(trtllm, module)
 {
     module.def(
         "moe_a2a_dispatch(Tensor token_selected_experts, Tensor[] input_payloads, Tensor workspace, int max_tokens_per_rank, "
-        "int ep_rank, int ep_size, int top_k) -> (Tensor[], Tensor)");
+        "int ep_rank, int ep_size, int top_k) -> (Tensor[], Tensor, Tensor)");
 }
 
 TORCH_LIBRARY_IMPL(trtllm, CUDA, module)

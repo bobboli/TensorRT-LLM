@@ -81,6 +81,7 @@ struct MoeA2ADispatchParams
     // Communication workspace
     void* workspace;    // IPC workspace for communication
     int* send_counters; // [ep_size] atomic counters - tracks tokens sent to each target rank
+    int* send_indices; // [max_tokens_per_rank, top_k] local index tensor for content verification
     
     // Completion tracking
     int* local_token_counter;          // Atomic counter for completed tokens on this rank
