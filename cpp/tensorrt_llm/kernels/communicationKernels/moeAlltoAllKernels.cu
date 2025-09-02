@@ -147,7 +147,7 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
             uint8_t const* src_ptr = src_data + local_token_idx * bytes_per_token;
 
             // Debug: print write info for first few tokens
-            if (lane_id == 0 && local_token_idx < 3 && payload_idx == 3) { // payload 3 is token_final_scales
+            if (lane_id == 0 && payload_idx == 3) { // payload 3 is token_final_scales
                 float* src_float = (float*)src_ptr;
                 printf("Rank %d token %d -> Rank %d pos %d: writing [%.0f, %.0f] to addr %p (base %p + offset %ld)\n", 
                        rank_id, local_token_idx, target_rank, dst_token_idx,
@@ -161,7 +161,7 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
         already_copied |= 1ULL << target_rank;
     }
 
-   // __threadfence_system();
+   __threadfence_system();
 
     // Finished sending this token. Check if we're the last token to complete.
     if (lane_id == 0) {
@@ -208,7 +208,7 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
 // Launch Functions
 // ============================================================================
 
-void moe_a2a_dispatch_op(MoeA2ADispatchParams const& params)
+void moe_a2a_dispatch_launch(MoeA2ADispatchParams const& params)
 {
     // Validate parameters
     TLLM_CHECK(params.top_k > 0 && params.top_k <= kMaxTopK);

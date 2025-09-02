@@ -151,6 +151,12 @@ def run_moe_a2a_dispatch_single_rank(ep_size, all_num_tokens, top_k,
         # Force synchronization to ensure all writes are visible
         torch.cuda.synchronize()
         
+        # Add MPI barrier to ensure all ranks complete their kernels before any rank checks data
+        # This is a temporary workaround for the MNNVL memory consistency issue
+        # from mpi4py import MPI
+        # comm = MPI.COMM_WORLD
+        # comm.Barrier()
+        
         # Debug: Check completion flags and workspace info
         print(f"\n=== Rank {rank} checking completion flags ===")
         print(f"Workspace data_ptr: {workspace.data_ptr():x}")
@@ -291,8 +297,8 @@ def verify_dispatch(all_token_selected_experts,
                     # Verify actual payload content was copied correctly
                     recv_buffers = all_recv_buffers[target_rank]
                     for payload_idx, payload in enumerate(payloads):
-                        if payload_idx <= 2: 
-                            continue
+                        # if payload_idx <= 2: 
+                        #     continue
                         recv_buffer = recv_buffers[payload_idx]
                         
                         source_data = payload[token_idx]

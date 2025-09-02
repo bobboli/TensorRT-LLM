@@ -53,7 +53,7 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor, torch::Tensor> moeA2ADispa
 {
     using tensorrt_llm::kernels::moe_a2a::PayloadDescriptor;
     using tensorrt_llm::kernels::moe_a2a::MoeA2ADispatchParams;
-    using tensorrt_llm::kernels::moe_a2a::moe_a2a_dispatch_op;
+    using tensorrt_llm::kernels::moe_a2a::moe_a2a_dispatch_launch;
     using tensorrt_llm::kernels::moe_a2a::kMaxTopK;
     using tensorrt_llm::kernels::moe_a2a::kMaxPayloads;
 
@@ -188,7 +188,7 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor, torch::Tensor> moeA2ADispa
     params.stream = at::cuda::getCurrentCUDAStream();
 
     // Launch the dispatch kernel
-    moe_a2a_dispatch_op(params);
+    moe_a2a_dispatch_launch(params);
     cudaError_t result = cudaGetLastError();
     TORCH_CHECK(result == cudaSuccess, "moe_a2a_dispatch kernel launch failed: ", cudaGetErrorString(result));
 

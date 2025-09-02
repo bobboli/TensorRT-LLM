@@ -124,16 +124,10 @@ struct MoeA2ACombineParams
 };
 
 // Dispatch kernels
-void moe_a2a_dispatch_op(MoeA2ADispatchParams const& params);
+void moe_a2a_dispatch_launch(MoeA2ADispatchParams const& params);
 
 // Combine kernels
-void moe_a2a_combine_op(MoeA2ACombineParams const& params);
-
-// Buffer layout helper functions
-inline __host__ __device__ int get_rank_buffer_offset(int rank_id, int buffer_size_per_rank)
-{
-    return rank_id * buffer_size_per_rank;
-}
+void moe_a2a_combine_launch(MoeA2ACombineParams const& params);
 
 
 } // namespace tensorrt_llm::kernels::moe_a2a
