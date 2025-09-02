@@ -82,18 +82,17 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
     constexpr int WARPS_PER_BLOCK = 8; // 256 threads / 32 threads per warp
     constexpr int WARP_SIZE = 32;
 
-    // Initialize completion_flags and local_token_counter at kernel start
+    // Initialize completion_flags at kernel start
     if (blockIdx.x == 0 && threadIdx.x == 0) {
-        // printf("Rank %d: Initializing with %d local tokens\n", rank_id, local_num_tokens);
-        // Thread 0 of block 0 initializes everything
-        for (int i = 0; i < ep_size; i++) {
-            // Use uncached store for initialization
-            int* flag_addr = &ptrs.completion_flags[rank_id][i];
-            asm volatile("st.global.wt.u32 [%0], %1;" :: "l"(flag_addr), "r"(0));
+        // Note: init flags that this rank will be writing to in the future, rather than local flags,
+        // which prevents racing for flags between ranks.
+        for (int target_rank = 0; target_rank < ep_size; target_rank++) {
+            ptrs.completion_flags[target_rank][rank_id] = 0;
         }
+        // Device-level threadfence prevents reordering the writing of the flags (which might be done by another thread in the same rank) in front of the initializations above.
+        __threadfence();
     }
-    // Ensure initialization is complete before proceeding
-    __threadfence();
+
     
     // Debug: confirm kernel is running
     if (blockIdx.x == 0 && threadIdx.x == 0) {
@@ -161,7 +160,8 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
         already_copied |= 1ULL << target_rank;
     }
 
-   __threadfence_system();
+    // TODO: Is this membar sufficient/necessary?
+    // __threadfence_system();
 
     // Finished sending this token. Check if we're the last token to complete.
     if (lane_id == 0) {
