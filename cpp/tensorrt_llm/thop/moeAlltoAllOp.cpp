@@ -131,7 +131,6 @@ std::tuple<std::vector<torch::Tensor>, torch::Tensor, torch::Tensor> moeA2ADispa
     {
         PayloadDescriptor desc{};
         desc.src_data = inputPayloads[i].data_ptr();
-        desc.recv_buffer = nullptr; // Not used in new design
         desc.element_size = payloadElementSizes[i];
         desc.elements_per_token = payloadElementsPerToken[i];
         payloadDescriptors.push_back(desc);

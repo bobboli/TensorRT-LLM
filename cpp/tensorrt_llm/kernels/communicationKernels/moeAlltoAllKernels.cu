@@ -176,15 +176,15 @@ void moe_a2a_dispatch_launch(MoeA2ADispatchParams const& params)
 {
     // Validate parameters
     TLLM_CHECK(params.top_k > 0 && params.top_k <= kMaxTopK);
-    TLLM_CHECK(params.ep_size > 0);
+    TLLM_CHECK(params.ep_size > 0 && params.ep_size <= kMaxRanks);
     TLLM_CHECK(params.local_num_tokens > 0);
     TLLM_CHECK(params.num_payloads > 0 && params.num_payloads <= kMaxPayloads);
 
     // Configure kernel launch
-    constexpr int block_size = 256;
-    constexpr int warp_size = 32;
-    constexpr int warps_per_block = block_size / warp_size; // 8 warps per block
-    int grid_size = (params.local_num_tokens + warps_per_block - 1) / warps_per_block;
+    constexpr int kBlockSize = 256;
+    constexpr int kWarpSize = 32;
+    constexpr int kWarpsPerBlock = kBlockSize / kWarpSize;
+    int grid_size = (params.local_num_tokens + kWarpsPerBlock - 1) / kWarpsPerBlock;
 
     // Prepare kernel pointers struct
     KernelPointers kernel_ptrs = {}; // Zero-initialize
@@ -206,7 +206,7 @@ void moe_a2a_dispatch_launch(MoeA2ADispatchParams const& params)
         kernel_ptrs.completion_flags[rank] = params.completion_flags[rank];
     }
 
-    moeA2ADispatchKernel<<<grid_size, block_size, 0, params.stream>>>(params.token_selected_experts,
+    moeA2ADispatchKernel<<<grid_size, kBlockSize, 0, params.stream>>>(params.token_selected_experts,
         kernel_ptrs, params.num_payloads,
         params.max_tokens_per_rank, params.send_counters, params.send_indices,
         params.local_token_counter, 

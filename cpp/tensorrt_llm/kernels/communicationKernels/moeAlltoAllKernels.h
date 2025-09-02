@@ -27,7 +27,6 @@ namespace tensorrt_llm::kernels::moe_a2a
 // Configuration constants
 static constexpr int kMaxExperts = 256; // Maximum number of experts per rank
 static constexpr int kMaxTopK = 8;      // Maximum top-k experts per token
-static constexpr int kWarpSize = 32;
 static constexpr int kMaxPayloads = 8;  // Maximum number of different payload types
 static constexpr int kMaxRanks = 64;    // Maximum supported EP size
 
@@ -35,7 +34,6 @@ static constexpr int kMaxRanks = 64;    // Maximum supported EP size
 struct PayloadDescriptor
 {
     void const* src_data;      // Source data pointer [local_num_tokens, elements_per_token]
-    void* recv_buffer;         // Contiguous receive buffer for this payload [ep_size * max_tokens * elements_per_token]
     int element_size;          // Size of each element in bytes
     int elements_per_token;    // Number of elements per token (e.g., hidden_size, top_k)
 };
@@ -55,70 +53,27 @@ struct MoeA2ADispatchParams
     // EP configuration
     int ep_size;           // Number of EP ranks
     int ep_rank;           // Current EP rank
-    int local_num_experts; // Number of experts on this rank
 
-                           // Token configuration
+    // Token configuration
     int local_num_tokens;    // Number of tokens on this rank
     int max_tokens_per_rank; // Maximum tokens per rank for pre-allocation
-    int hidden_size;         // Hidden dimension
     int top_k;               // Number of experts per token
 
-    // Data type
-    nvinfer1::DataType dtype;
-
-    // Expert routing information (always needed)
+    // Expert routing information
     int32_t const* token_selected_experts; // [local_num_tokens, top_k]
 
     // Generic payloads
     int num_payloads;                         // Number of different payload types
     PayloadDescriptor payloads[kMaxPayloads]; // Array of payload descriptors
 
-    // Receive buffers - [ep_size][kMaxPayloads]
-    void* recv_buffers[kMaxRanks][kMaxPayloads];      // Per-rank receive buffers for each payload
-    int* completion_flags[kMaxRanks];  // Per-rank completion flags pointers
+    // Receive buffers and synchronization
+    void* recv_buffers[kMaxRanks][kMaxPayloads];  // Per-rank receive buffers for each payload
+    int* completion_flags[kMaxRanks];             // Per-rank completion flags pointers
 
-
-    // Communication workspace
-    void* workspace;    // IPC workspace for communication
-    int* send_counters; // [ep_size] atomic counters - tracks tokens sent to each target rank
-    int* send_indices; // [max_tokens_per_rank, top_k] local index tensor for content verification
-    
-    // Completion tracking
-    int* local_token_counter;          // Atomic counter for completed tokens on this rank
-
-    cudaStream_t stream;
-};
-
-// Combine phase parameters
-struct MoeA2ACombineParams
-{
-    // EP configuration
-    int ep_size;           // Number of EP ranks
-    int ep_rank;           // Current EP rank
-    int local_num_experts; // Number of experts on this rank
-
-                           // Token configuration
-    int local_num_tokens;    // Number of tokens that selected this rank
-    int max_tokens_per_rank; // Maximum tokens per rank for pre-allocation
-    int hidden_size;         // Hidden dimension
-    int top_k;               // Number of experts per token
-
-    // Data type
-    nvinfer1::DataType dtype;
-
-    // Input tensors (processed expert outputs)
-    void* expert_outputs; // [max_batch_size, hidden_size] with holes
-
-                          // Generic payloads for combine phase
-    int num_result_payloads;                         // Number of result payloads to send back
-    PayloadDescriptor result_payloads[kMaxPayloads]; // Array of result payload descriptors
-
-    // Communication workspace
-    void* workspace;    // IPC workspace for communication
-    int* send_counters; // [ep_size] atomic counters - tracks tokens sent to each rank
-
-    // Reduction parameters
-    bool enable_reduction; // Whether to perform reduction during combine
+    // Communication tracking
+    int* send_counters;        // [ep_size] atomic counters - tracks tokens sent to each target rank
+    int* send_indices;         // [local_num_tokens, ep_size] send index tensor
+    int* local_token_counter;  // Atomic counter for completed tokens on this rank
 
     cudaStream_t stream;
 };
@@ -127,7 +82,7 @@ struct MoeA2ACombineParams
 void moe_a2a_dispatch_launch(MoeA2ADispatchParams const& params);
 
 // Combine kernels
-void moe_a2a_combine_launch(MoeA2ACombineParams const& params);
+// void moe_a2a_combine_launch(MoeA2ACombineParams const& params);
 
 
 } // namespace tensorrt_llm::kernels::moe_a2a
