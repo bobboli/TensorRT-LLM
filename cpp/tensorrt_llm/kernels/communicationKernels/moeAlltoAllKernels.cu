@@ -93,13 +93,6 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
         __threadfence();
     }
 
-    
-    // Debug: confirm kernel is running
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-        printf("Rank %d: Kernel launched with %d local tokens, ep_size=%d\n", 
-               rank_id, local_num_tokens, ep_size);
-    }
-
     // Determine which warp this thread belongs to and which token it handles
     int warp_id_in_block = threadIdx.x / WARP_SIZE;
     int lane_id = threadIdx.x % WARP_SIZE;
@@ -111,11 +104,6 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
          return;
     }
     
-    // Debug: Track token processing
-    // if (lane_id == 0) {
-    //     printf("###Rank %d: Processing token %d\n", rank_id, local_token_idx);
-    // }
-
     uint64_t already_copied = 0;
     for (int k = 0; k < top_k; k++)
     {
@@ -145,15 +133,6 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
             uint8_t* dst_ptr = dst_data + (rank_id * max_tokens_per_rank + dst_token_idx) * bytes_per_token;
             uint8_t const* src_ptr = src_data + local_token_idx * bytes_per_token;
 
-            // Debug: print write info for first few tokens
-            if (lane_id == 0 && payload_idx == 3) { // payload 3 is token_final_scales
-                float* src_float = (float*)src_ptr;
-                printf("Rank %d token %d -> Rank %d pos %d: writing [%.0f, %.0f] to addr %p (base %p + offset %ld)\n", 
-                       rank_id, local_token_idx, target_rank, dst_token_idx,
-                       src_float[0], src_float[1], dst_ptr, dst_data, 
-                       (rank_id * max_tokens_per_rank + dst_token_idx) * bytes_per_token);
-            }
-
             warp_vectorized_copy(dst_ptr, src_ptr, bytes_per_token, lane_id);
         }
 
@@ -166,38 +145,23 @@ __global__ void moeA2ADispatchKernel(int32_t const* token_selected_experts, // [
     // Finished sending this token. Check if we're the last token to complete.
     if (lane_id == 0) {
         int completed_tokens = atomicAdd(local_token_counter, 1) + 1;
-        // printf("+++Rank %d: Token %d completed, total completed: %d/%d\n", 
-        //        rank_id, local_token_idx, completed_tokens, local_num_tokens);
         
-        if (completed_tokens == local_num_tokens) {
-            printf("Rank %d: Last token completed! Signaling to other ranks\n", rank_id);
-            // This warp processed the last token! Ensure all writes are visible
-            // __threadfence_system();
-            
+        if (completed_tokens == local_num_tokens) {            
             // Signal completion to all ranks with proper release semantics
             for (int target_rank = 0; target_rank < ep_size; target_rank++) {
                 // Set flag in target rank's completion flags array at position rank_id
                 int* flag_addr = &ptrs.completion_flags[target_rank][rank_id];
-                printf("***Rank %d: Setting completion flag for target rank %d at address %p\n",
-                       rank_id, target_rank, flag_addr);
                 // Use release store for cross-GPU visibility
-                // According to PTX docs, we need memory synchronization for cross-scope ops
-                // __threadfence_system();
                 asm volatile("st.release.sys.u32 [%0], %1;" :: "l"(flag_addr), "r"(1));
             }
             
-            // Now wait for all ranks to complete their dispatch
-            for (int source_rank = 0; source_rank < ep_size; source_rank++) {
-                // Busy wait until source_rank signals completion
+            // Busy wait until source_rank signals completion
+            for (int source_rank = 0; source_rank < ep_size; source_rank++) {         
                 int* flag_ptr = &ptrs.completion_flags[rank_id][source_rank];
                 int flag_value = 0;
                 do {
                     // Use acquire load for cross-GPU visibility
                     asm volatile("ld.acquire.sys.u32 %0, [%1];" : "=r"(flag_value) : "l"(flag_ptr));
-                    // if (flag_value == 0) {
-                    //     printf("rank %d spin wait for source rank %d at address %p. flag_value %d\n", 
-                    //            rank_id, source_rank, flag_ptr, flag_value);
-                    // }
                 } while (flag_value == 0);
             }
         }

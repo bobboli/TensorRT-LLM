@@ -98,9 +98,9 @@ def make_nvfp4_payloads(local_num_tokens: int, hidden_size: int, top_k: int,
                                     dtype=torch.float32,
                                     device='cuda')
 
-    token_final_scales[:, 0] = rank
-    token_final_scales[:, 1] = torch.linspace(0, local_num_tokens - 1, local_num_tokens, dtype=torch.float32, device='cuda')
-
+    # Construct the data to contain info about send rank and local_token_idx, which is used for debugging
+    # token_final_scales[:, 0] = rank
+    # token_final_scales[:, 1] = torch.linspace(0, local_num_tokens - 1, local_num_tokens, dtype=torch.float32, device='cuda')
 
     payloads.append(token_final_scales)
     return payloads
@@ -147,42 +147,20 @@ def run_moe_a2a_dispatch_single_rank(ep_size, all_num_tokens, top_k,
             rank,
             ep_size,
             top_k)
-        
-        # Force synchronization to ensure all writes are visible
-        torch.cuda.synchronize()
-        
-        # Add MPI barrier to ensure all ranks complete their kernels before any rank checks data
-        # This is a temporary workaround for the MNNVL memory consistency issue
-        # from mpi4py import MPI
-        # comm = MPI.COMM_WORLD
-        # comm.Barrier()
-        
-        # Debug: Check completion flags and workspace info
-        print(f"\n=== Rank {rank} checking completion flags ===")
-        print(f"Workspace data_ptr: {workspace.data_ptr():x}")
-        print(f"Workspace shape: {workspace.shape}, stride: {workspace.stride()}")
-        print(f"Workspace element at [rank]: {workspace[rank].data_ptr():x}")
-        
+                        
         # The completion flags are stored after all payloads in the workspace
         completion_flags_offset = sum(
             ep_size * max_tokens_per_rank * (p.shape[1] * p.element_size())
             for p in payloads
         )
-        # Each rank has ep_size flags (one from each source rank)
+        # Each rank has ep_size flags (one from each source rank). Check all the flags are marked.
         completion_flags_ptr = workspace[rank, completion_flags_offset:completion_flags_offset + ep_size * 4]
         completion_flags = completion_flags_ptr.view(torch.int32)
-        print(f"Rank {rank} completion flags: {completion_flags.tolist()}")
-        print(f"Expected: [1, 1, 1, 1] (all ranks should have signaled completion)")
+        expected_flags = torch.ones(ep_size, dtype=completion_flags.dtype, device=completion_flags.device)
+        assert torch.all(completion_flags == expected_flags), (
+            f"Rank {rank} completion flags: {completion_flags}, expected: {expected_flags}"
+        )
         
-        # Debug: Check if data is actually in workspace
-        print(f"\n=== Rank {rank} checking received data ===")
-        # Show first few values from each source rank in payload 3 (token_final_scales)
-        recv_buf_3 = recv_buffers[3]  # token_final_scales
-        for src_rank in range(ep_size):
-            print(f"Data from rank {src_rank}: {recv_buf_3[src_rank, :5].tolist()}")
-        
-        # torch.cuda.synchronize()
-
         # Return results to be collected (move to CPU for MPI transfer)
         return (token_selected_experts.cpu(),
                 [p.cpu() for p in payloads],
@@ -297,17 +275,10 @@ def verify_dispatch(all_token_selected_experts,
                     # Verify actual payload content was copied correctly
                     recv_buffers = all_recv_buffers[target_rank]
                     for payload_idx, payload in enumerate(payloads):
-                        # if payload_idx <= 2: 
-                        #     continue
                         recv_buffer = recv_buffers[payload_idx]
                         
                         source_data = payload[token_idx]
                         received_data = recv_buffer[send_rank, dst_pos]
-
-                        # print("Recv buffer shape", recv_buffer.shape)
-                        # print("Recv buffer for target rank", target_rank, recv_buffer)
-                        # print("############################")
-
                         # Compare source and received data
                         torch.testing.assert_close(received_data, source_data,
                                                   msg=f"Content mismatch: received_data={received_data} source_data={source_data} send_rank={send_rank} token_idx={token_idx} experts={experts.tolist()} target_rank={target_rank}, send_indices[token_idx]={send_indices[token_idx].tolist()}")
