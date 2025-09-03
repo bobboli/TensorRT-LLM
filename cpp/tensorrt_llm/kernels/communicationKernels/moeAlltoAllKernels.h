@@ -19,8 +19,6 @@
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 
-#include "tensorrt_llm/kernels/quantization.h"
-
 namespace tensorrt_llm::kernels::moe_a2a
 {
 
@@ -39,11 +37,20 @@ struct PayloadDescriptor
 };
 
 // Kernel pointers packed into a struct for device access
-struct KernelPointers
+// Dispatch kernel pointers - const source data
+struct DispatchKernelPointers
 {
     void const* src_data_ptrs[kMaxPayloads];                    // Array of source data pointers
     void* recv_buffers[kMaxRanks][kMaxPayloads];               // 2D array of receive buffer pointers
     int payload_bytes_per_token[kMaxPayloads];                 // Bytes per token for each payload
+    int* completion_flags[kMaxRanks];                          // Per-rank completion flags pointers
+};
+
+// Combine kernel pointers - non-const output in src_data_ptrs[0], const recv buffers
+struct CombineKernelPointers
+{
+    void* src_data_ptrs[kMaxPayloads];                         // src_data_ptrs[0] is output
+    void const* recv_buffers[kMaxRanks][kMaxPayloads];         // 2D array of receive buffer pointers (const)
     int* completion_flags[kMaxRanks];                          // Per-rank completion flags pointers
 };
 
@@ -81,8 +88,36 @@ struct MoeA2ADispatchParams
 // Dispatch kernels
 void moe_a2a_dispatch_launch(MoeA2ADispatchParams const& params);
 
+// Combine phase parameters
+struct MoeA2ACombineParams
+{
+    // EP configuration
+    int ep_size;           // Number of EP ranks
+    int ep_rank;           // Current EP rank
+
+    // Token configuration
+    int local_num_tokens;    // Number of tokens on this rank
+    int max_tokens_per_rank; // Maximum tokens per rank for pre-allocation
+    int top_k;               // Number of experts per token
+
+    // Expert routing information
+    int const* send_indices;               // [local_num_tokens, ep_size] from dispatch
+
+    // Single payload information
+    void const* recv_buffers[kMaxRanks];  // Per-rank receive buffers (only for single payload)
+    void* output_data;                     // Output buffer [local_num_tokens, elements_per_token]
+    int elements_per_token;                // Number of elements per token
+    nvinfer1::DataType dtype;              // Data type for proper summation
+
+    // Synchronization
+    int* local_token_counter;              // Atomic counter for completed tokens
+    int* completion_flags[kMaxRanks];      // Per-rank completion flags pointers
+
+    cudaStream_t stream;
+};
+
 // Combine kernels
-// void moe_a2a_combine_launch(MoeA2ACombineParams const& params);
+void moe_a2a_combine_launch(MoeA2ACombineParams const& params);
 
 
 } // namespace tensorrt_llm::kernels::moe_a2a
