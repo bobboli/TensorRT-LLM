@@ -129,12 +129,12 @@ handling, and video encoding are outside the measurement.
 Video quality includes motion consistency and temporal stability, which a framewise metric cannot
 show on its own. Figure 2 compares four P1 generations. All three Skip Softmax examples use the
 conservative star setting from the frontier: `target_sparsity=0.75` and
-`disabled_until_timestep=0.86`.
+`disabled_until_timestep=0.86`. The title speedups use compiled dense BF16 as the baseline.
 
-| Eager BF16 reference | BF16 + SAGE + Skip Softmax |
+| Eager BF16 reference (0.84×) | BF16 + SAGE + Skip Softmax (1.17×) |
 | :---: | :---: |
 | ![Eager BF16 P1 generation](../media/tech_blog28_video_p01_eager_bf16.gif) | ![BF16 with SAGE and Skip Softmax P1 generation](../media/tech_blog28_video_p01_bf16_sage_skip_softmax.gif) |
-| **FP8 blockwise + SAGE + Skip Softmax** | **NVFP4 + SAGE + Skip Softmax** |
+| **FP8 blockwise + SAGE + Skip Softmax (1.28×)** | **NVFP4 + SAGE + Skip Softmax (1.42×)** |
 | ![FP8 blockwise with SAGE and Skip Softmax P1 generation](../media/tech_blog28_video_p01_fp8_sage_skip_softmax.gif) | ![NVFP4 with SAGE and Skip Softmax P1 generation](../media/tech_blog28_video_p01_nvfp4_sage_skip_softmax.gif) |
 
 <p align="center"><sub><em>Figure 2. P1 video comparison across the eager BF16 reference and three
