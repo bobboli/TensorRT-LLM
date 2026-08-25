@@ -88,6 +88,10 @@ User configuration is supplied through Python or YAML and controls how the check
 - Set `target_sparsity` to request a sparsity target. The runtime resolves it to `threshold_scale_factor` using the checkpoint calibration formula. If the checkpoint does not provide the required Skip Softmax Attention metadata, the runtime raises an error.
 - Set `disabled_until_timestep` to disable Skip Softmax Attention at the beginning of denoising. The cutoff is expressed in normalized scheduler time; the number of dense steps it produces depends on the scheduler and the number of inference steps.
 
+`threshold_scale_factor` and `target_sparsity` are alternatives: if both are present, `threshold_scale_factor` takes precedence and the calibration formula is not used. User-provided `target_sparsity` and `disabled_until_timestep` override checkpoint defaults. Checkpoint `ignore` patterns always disable Skip Softmax Attention for matching layers.
+
+Skip Softmax Attention works with both the **TRTLLM** and **CUTEDSL** attention backends in VisualGen. Set `attention_config.backend` to either when enabling it. On CUTEDSL, Skip Softmax Attention can also be combined with `quant_attention_config`'s block-scaled Q/K recipes (MXFP8, NVFP4); VSA is the only CUTEDSL sparse-attention algorithm that is mutually exclusive with quantized attention.
+
 #### Mapping `disabled_until_timestep` to Actual Denoising Steps
 
 VisualGen passes each transformer a normalized scheduler timestep `t` in `[0, 1]`. Denoising
@@ -118,10 +122,6 @@ This control is specific to iterative visual generation: the same attention laye
 while the denoising state changes, so early high-noise steps can remain dense before sparsity is
 enabled later. Autoregressive LLM inference has no descending diffusion timestep and therefore no
 equivalent denoising-phase boundary.
-
-`threshold_scale_factor` and `target_sparsity` are alternatives: if both are present, `threshold_scale_factor` takes precedence and the calibration formula is not used. User-provided `target_sparsity` and `disabled_until_timestep` override checkpoint defaults. Checkpoint `ignore` patterns always disable Skip Softmax Attention for matching layers.
-
-Skip Softmax Attention works with both the **TRTLLM** and **CUTEDSL** attention backends in VisualGen. Set `attention_config.backend` to either when enabling it. On CUTEDSL, Skip Softmax Attention can also be combined with `quant_attention_config`'s block-scaled Q/K recipes (MXFP8, NVFP4); VSA is the only CUTEDSL sparse-attention algorithm that is mutually exclusive with quantized attention.
 
 #### Python API
 
