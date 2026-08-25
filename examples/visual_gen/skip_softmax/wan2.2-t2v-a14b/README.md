@@ -6,6 +6,11 @@ This directory contains the component-specific ModelOpt calibration metadata nee
 It also provides a VisualGen configuration that combines NVFP4 GEMMs, SAGE attention, and Skip
 Softmax Attention.
 
+The public checkpoint used by this example does not include Skip Softmax calibration metadata, so
+the formulas are packaged here as overlays. The runtime knobs `target_sparsity` and
+`disabled_until_timestep` belong in the VisualGen YAML, but the formula that converts a target
+sparsity into the kernel threshold must be stored in each transformer's `config.json`.
+
 Wan 2.2 uses separate high-noise and low-noise transformers. Their calibration formulas differ,
 so each component has its own overlay:
 

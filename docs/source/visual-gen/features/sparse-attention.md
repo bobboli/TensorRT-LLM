@@ -86,7 +86,38 @@ User configuration is supplied through Python or YAML and controls how the check
 
 - Set `threshold_scale_factor` directly to pass a concrete threshold to the kernel. This does not require checkpoint calibration metadata.
 - Set `target_sparsity` to request a sparsity target. The runtime resolves it to `threshold_scale_factor` using the checkpoint calibration formula. If the checkpoint does not provide the required Skip Softmax Attention metadata, the runtime raises an error.
-- Set `disabled_until_timestep` to disable Skip Softmax Attention at the beginning of denoising. This cutoff is normalized and therefore independent of the user-selected number of denoising steps.
+- Set `disabled_until_timestep` to disable Skip Softmax Attention at the beginning of denoising. The cutoff is expressed in normalized scheduler time; the number of dense steps it produces depends on the scheduler and the number of inference steps.
+
+#### Mapping `disabled_until_timestep` to Actual Denoising Steps
+
+VisualGen passes each transformer a normalized scheduler timestep `t` in `[0, 1]`. Denoising
+proceeds from high to low `t`. For a configured `disabled_until_timestep` value `D`, Skip Softmax
+Attention is disabled while `t >= D` and enabled once `t < D`. Equality therefore belongs to the
+dense phase.
+
+For a scheduler sequence `t[0], ..., t[N-1]`, the number of initial dense-attention steps is the
+number of entries whose normalized timestep is greater than or equal to `D`:
+
+```text
+dense_warmup_steps = count(t[i] >= disabled_until_timestep)
+```
+
+The mapping must be computed from the actual scheduler sequence; `D` is not simply a fraction of
+`N` when the schedule is nonlinear. For example, the 50-step Wan 2.2 UniPC schedule used in the
+video-generation optimization blog has the following approximate mapping:
+
+| `disabled_until_timestep` | Initial dense steps | Skip Softmax steps |
+| :---: | ---: | ---: |
+| `1.00` | 0 | 50 |
+| `0.97` | 4 | 46 |
+| `0.94` | 8 | 42 |
+| `0.90` | 12 | 38 |
+| `0.86` | 16 | 34 |
+
+This control is specific to iterative visual generation: the same attention layers run repeatedly
+while the denoising state changes, so early high-noise steps can remain dense before sparsity is
+enabled later. Autoregressive LLM inference has no descending diffusion timestep and therefore no
+equivalent denoising-phase boundary.
 
 `threshold_scale_factor` and `target_sparsity` are alternatives: if both are present, `threshold_scale_factor` takes precedence and the calibration formula is not used. User-provided `target_sparsity` and `disabled_until_timestep` override checkpoint defaults. Checkpoint `ignore` patterns always disable Skip Softmax Attention for matching layers.
 
