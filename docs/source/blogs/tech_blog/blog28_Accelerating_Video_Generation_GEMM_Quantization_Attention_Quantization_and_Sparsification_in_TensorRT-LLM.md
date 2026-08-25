@@ -22,11 +22,9 @@ B200.</em></sub></p>
 Our earlier post,
 [Scaling Video Generation Across NVL72 Rack with TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM/blob/main/docs/source/blogs/tech_blog/blog25_Scaling_Video_Generation_Across_NVL72_Rack_with_TensorRT-LLM.md),
 focused on scale-out. This post covers three complementary acceleration techniques inside one
-transformer pipeline: linear-layer quantization, quantized attention, and sparse attention. On
-the Wan 2.2 workload above, the combination of NVFP4 linear layers, SAGE quantized attention, and
-Skip Softmax reduces pipeline-forward latency from **525.0 to 374.9
-seconds**, a **1.40× speedup**. The central question is how to recover that time without giving
-up more visual quality than the application can tolerate.
+transformer pipeline: linear-layer quantization, quantized attention, and sparse attention. The
+central question is how to reduce latency without giving up more visual quality than the
+application can tolerate.
 
 ## Table of Contents
 
