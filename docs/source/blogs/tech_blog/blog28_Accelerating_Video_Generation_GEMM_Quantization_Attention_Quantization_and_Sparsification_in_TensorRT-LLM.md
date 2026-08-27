@@ -252,10 +252,13 @@ the stars in Figure 2.</em></sub></p>
 The steps below target TensorRT-LLM 1.3.0rc24.
 
 The public BF16 checkpoint does not include the Skip Softmax calibration formulas used here. The
-[Wan 2.2 Skip Softmax example](https://github.com/NVIDIA/TensorRT-LLM/tree/main/examples/visual_gen/skip_softmax/wan2.2-t2v-a14b)
-therefore packages two ModelOpt calibration overlays alongside the VisualGen configuration for the
-1.40× NVFP4 + SAGE result. Apply the overlays to the high-noise and low-noise transformer configs
-in a local checkpoint copy:
+[ModelOpt Wan 2.2 calibration workflow](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/diffusers/sparsity)
+documents how to calibrate Skip Softmax and export the resulting `sparse_attention_config` field
+to each transformer's `config.json`. For convenience, the
+[TensorRT-LLM example](https://github.com/NVIDIA/TensorRT-LLM/tree/main/examples/visual_gen/skip_softmax/wan2.2-t2v-a14b)
+includes the calibrated `sparse_attention_config` for both the high-noise and low-noise
+transformers and a helper that writes it into a local checkpoint copy. The same calibration can be
+used with the GEMM and attention quantization choices described above:
 
 ```bash
 export MODEL_DIR=/path/to/Wan2.2-T2V-A14B-Diffusers
@@ -265,8 +268,11 @@ export EXAMPLE_DIR="$TRTLLM_ROOT/examples/visual_gen/skip_softmax/wan2.2-t2v-a14
 python "$EXAMPLE_DIR/apply_calibration.py" --model-dir "$MODEL_DIR"
 ```
 
-The helper adds only calibrated Skip Softmax metadata to the checkpoint; it does not quantize GEMM
-weights. Runtime choices are centralized in the packaged
+The helper is a convenience wrapper that validates and merges the published Skip Softmax
+metadata; it does not rerun calibration or quantize GEMM weights.
+
+Runtime choices are centralized
+in the packaged
 [`visual_gen.yaml`](https://github.com/NVIDIA/TensorRT-LLM/blob/main/examples/visual_gen/skip_softmax/wan2.2-t2v-a14b/visual_gen.yaml).
 
 ### VisualGen configuration
