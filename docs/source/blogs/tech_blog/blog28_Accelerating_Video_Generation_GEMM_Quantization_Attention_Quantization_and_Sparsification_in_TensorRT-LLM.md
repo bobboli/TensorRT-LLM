@@ -125,8 +125,8 @@ The 96 configurations are a characterization sweep, not a recommended per-model 
 ```
 
 Every setting uses the same seven prompt-and-seed pairs. Latency covers one complete 50-step
-pipeline forward after compilation warmup; model loading, HTTP handling, and video encoding are
-outside the measurement. These 96 points form the quality-speed frontier shown next.
+pipeline forward; model loading, HTTP handling, and video encoding are outside the measurement.
+These 96 points form the quality-speed frontier shown next.
 
 ### Quality-speed frontier
 
@@ -295,9 +295,6 @@ attention_config:
 torch_compile_config:
   enable: true
   enable_autotune: false
-
-cuda_graph_config:
-  enable: false
 ```
 
 The `quant_config` block selects the linear-layer GEMM path. All three choices start from the same
@@ -403,12 +400,10 @@ curl --fail --silent --show-error \
 
 </details>
 
-For the reported latency, each prompt first runs one untimed 50-step generation to compile both
-Wan transformer stages. After CUDA synchronization, a second 50-step pipeline forward is timed
-and synchronized; the seven prompt times are then averaged. Video encoding is outside this timed
-region. The eager BF16 quality reference disables compilation, quantization, SAGE, and Skip
-Softmax. AlexNet LPIPS is computed between corresponding frames, averaged over all 81 frames and
-then over the seven prompts.
+For the reported latency, a complete 50-step pipeline forward is bracketed by CUDA synchronization,
+and the seven prompt times are averaged. Video encoding is outside this timed region. The eager
+BF16 quality reference disables compilation, quantization, SAGE, and Skip Softmax. AlexNet LPIPS is
+computed between corresponding frames, averaged over all 81 frames and then over the seven prompts.
 
 ## Conclusion
 
