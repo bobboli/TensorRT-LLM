@@ -48,15 +48,14 @@ both numeric precision and scale granularity:
 | FP8 row-wise | FP8 E4M3 / FP8 E4M3 | Per-output-channel weights; per-token activations | Yes ([WIP](https://github.com/NVIDIA/TensorRT-LLM/pull/16847)) | Yes ([WIP](https://github.com/NVIDIA/TensorRT-LLM/pull/16847)) |
 | NVFP4 | FP4 E2M1 / FP4 E2M1 | 16-element blocks with FP8 scale factors | Yes | Yes |
 
-Here, *dynamic* means converting high-precision weights while loading the model, while *static*
-means loading a prequantized checkpoint with its scales. Static checkpoints can be produced with
+Here, *dynamic* means converting high-precision weights while loading the model and computing
+activation scales at runtime. *Static* means loading a checkpoint with prequantized weights and
+activation scales calibrated offline. Static checkpoints can be produced with
 [NVIDIA Model Optimizer](https://github.com/NVIDIA/Model-Optimizer), whose offline calibration can
 apply model-aware choices such as calibrated scales and keeping sensitive layers at higher
 precision. At the same target format, these algorithmic choices generally preserve accuracy
-better than quantizing every eligible layer dynamically at load time. This distinction describes
-how weights are prepared; activations are quantized as the model runs. The FP8 blockwise and
-NVFP4 results below dynamically quantize eligible BF16 weights at load time. NVFP4 pushes
-precision lower for more throughput.
+better than quantizing every eligible layer dynamically at load time. The FP8 blockwise and
+NVFP4 results below use the dynamic path.
 
 ## Attention Optimizations
 
@@ -81,7 +80,7 @@ running maximum. Rejected blocks skip exponentiation and the corresponding value
 the sparsity pattern is determined dynamically rather than stored with the model.
 
 `target_sparsity` controls how aggressively to skip, while `disabled_until_timestep` keeps the
-early high-noise portion of denoising dense. In the 50-step UniPC schedule used here,
+early denoising steps dense. In the 50-step UniPC schedule used here,
 `disabled_until_timestep=0.86` corresponds to 16 initial dense steps and 34 Skip Softmax steps.
 Calibration also protects sensitive layers by leaving them on dense attention. See the
 [VisualGen Skip Softmax timestep documentation](https://github.com/NVIDIA/TensorRT-LLM/blob/main/docs/source/visual-gen/features/sparse-attention.md#mapping-disabled_until_timestep-to-actual-denoising-steps)
