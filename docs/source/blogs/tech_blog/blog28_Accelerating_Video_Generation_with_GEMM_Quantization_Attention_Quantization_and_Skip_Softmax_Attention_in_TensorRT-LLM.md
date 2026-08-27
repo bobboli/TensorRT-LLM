@@ -1,4 +1,4 @@
-# Accelerating Video Generation: GEMM Quantization, Attention Quantization and Sparsification in TensorRT-LLM
+# Accelerating Video Generation with GEMM Quantization, Attention Quantization and Skip Softmax Attention in TensorRT-LLM
 
 By NVIDIA TensorRT-LLM Team
 
