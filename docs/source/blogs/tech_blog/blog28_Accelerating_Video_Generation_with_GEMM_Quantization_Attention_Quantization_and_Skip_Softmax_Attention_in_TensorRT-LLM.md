@@ -48,8 +48,9 @@ both numeric precision and scale granularity:
 | FP8 row-wise | FP8 E4M3 / FP8 E4M3 | Per-output-channel weights; per-token activations | Yes ([WIP](https://github.com/NVIDIA/TensorRT-LLM/pull/16847)) | Yes ([WIP](https://github.com/NVIDIA/TensorRT-LLM/pull/16847)) |
 | NVFP4 | FP4 E2M1 / FP4 E2M1 | 16-element blocks with FP8 scale factors | Yes | Yes |
 
-The FP8 blockwise and NVFP4 results in this post use dynamic quantization: high-precision weights
-are quantized while loading the model, and activation scales are computed at runtime.
+Of the quantization options above, this post evaluates only FP8 blockwise and NVFP4. Both use
+dynamic quantization: high-precision weights are quantized while loading the model, and activation
+scales are computed at runtime.
 [NVIDIA Model Optimizer](https://github.com/NVIDIA/Model-Optimizer) can instead produce statically
 quantized checkpoints with prequantized weights and calibrated weight and activation scales. For
 the same quantization format, offline calibration can better preserve accuracy.
