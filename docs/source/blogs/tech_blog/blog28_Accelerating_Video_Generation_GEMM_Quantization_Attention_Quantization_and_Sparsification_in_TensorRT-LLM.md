@@ -376,7 +376,6 @@ curl --fail --silent --show-error \
       "frame_rate": 16,
       "num_inference_steps": 50,
       "guidance_scale": 5.0,
-      "max_sequence_length": 512,
       "seed": 1001,
       "format": "mp4",
       "extra_params": {
