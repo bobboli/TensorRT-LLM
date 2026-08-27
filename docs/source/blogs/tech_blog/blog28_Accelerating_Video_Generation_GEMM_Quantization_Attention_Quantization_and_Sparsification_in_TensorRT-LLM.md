@@ -330,11 +330,16 @@ The `quant_attention_config` block selects SAGE independently of GEMM precision.
 uses INT8 Q/K, FP8 V, and Q/K/V block sizes of 1/16/1 on the `TRTLLM` backend. Remove this block to
 keep attention unquantized while retaining Skip Softmax.
 
-The `sparse_attention_config` block controls Skip Softmax. `target_sparsity` is converted to a
-threshold through each transformer's calibration formula, so achieved sparsity can vary by layer
-and timestep. `disabled_until_timestep` controls when skipping begins as denoising descends from
-near 1 to 0: a lower value keeps more early steps dense. Calibration also supplies an `ignore`
-list for layers that should stay dense.
+The `sparse_attention_config` block controls Skip Softmax:
+
+- `target_sparsity` is converted to a threshold through each transformer's calibration formula, so
+  achieved sparsity can vary by layer and timestep.
+- This `target_sparsity` form requires checkpoint calibration metadata. Without calibration, Skip
+  Softmax can instead be enabled by configuring `threshold_scale_factor` directly. See the
+  [VisualGen Skip Softmax Attention documentation](https://github.com/NVIDIA/TensorRT-LLM/blob/main/docs/source/visual-gen/features/sparse-attention.md#skip-softmax-attention)
+  for direct-threshold configuration.
+- `disabled_until_timestep` controls when skipping begins as denoising descends from near 1 to 0: a
+  lower value keeps more early steps dense.
 
 The packaged YAML configures Skip Softmax as follows:
 
@@ -346,11 +351,6 @@ attention_config:
     target_sparsity: 0.65
     disabled_until_timestep: 0.86
 ```
-
-This `target_sparsity` form requires checkpoint calibration metadata. Without calibration, Skip
-Softmax can instead be enabled by configuring `threshold_scale_factor` directly. See the
-[VisualGen Skip Softmax Attention documentation](https://github.com/NVIDIA/TensorRT-LLM/blob/main/docs/source/visual-gen/features/sparse-attention.md#skip-softmax-attention)
-for direct-threshold configuration.
 
 ### Run with trtllm-serve
 
