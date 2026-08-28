@@ -48,17 +48,21 @@ both numeric precision and scale granularity:
 | FP8 row-wise | FP8 E4M3 / FP8 E4M3 | Per-output-channel weights; per-token activations | Yes ([WIP](https://github.com/NVIDIA/TensorRT-LLM/pull/16847)) | Yes ([WIP](https://github.com/NVIDIA/TensorRT-LLM/pull/16847)) |
 | NVFP4 | FP4 E2M1 / FP4 E2M1 | 16-element blocks with FP8 scale factors | Yes | Yes |
 
-Of the quantization options above, this post evaluates only FP8 blockwise and NVFP4. Both use
-dynamic quantization: high-precision weights are quantized while loading the model, and activation
-scales are computed at runtime.
-[NVIDIA Model Optimizer](https://github.com/NVIDIA/Model-Optimizer) can instead produce statically
-quantized checkpoints with prequantized weights and calibrated weight and activation scales. For
-the same quantization format, offline calibration can better preserve accuracy.
+For convenience, the current sweep evaluates dynamic FP8 blockwise and NVFP4 from the same public
+BF16 checkpoint: high-precision weights are quantized while loading the model, and activation
+scales are computed at runtime. This lets the experiment switch GEMM precision through the
+VisualGen configuration without a separate quantized checkpoint. It does not use the published
+[static NVFP4 checkpoint](https://huggingface.co/nvidia/Wan2.2-T2V-A14B-Diffusers-NVFP4).
+The [ModelOpt diffusion PTQ example](https://github.com/NVIDIA/Model-Optimizer/blob/main/examples/diffusers/README.md#post-training-quantization-ptq)
+shows how to calibrate and export static checkpoints with prequantized weights and calibrated
+weight and activation scales. For the same quantization format, offline calibration can better
+preserve accuracy.
 
 ## Attention Optimizations
 
 Attention offers two complementary levers: quantization makes its matrix multiplications cheaper,
-while sparsity avoids work that contributes little to the output.
+while Skip Softmax skips exponentiation and the corresponding `P×V` accumulation for rejected
+score blocks.
 
 ### Quantized Attention
 
@@ -100,16 +104,17 @@ attention precision, and Skip Softmax settings.
 | Linear-layer paths | BF16, dynamic `FP8_BLOCK_SCALES`, dynamic `NVFP4` |
 | Attention paths | Dense, or SAGE with INT8 Q/K, FP8 V, and Q/K/V block sizes of 1/16/1 |
 
-Classifier-free guidance runs at every step by batching the positive and negative branches
-together; CFG parallelism is disabled.
+We use two baselines:
 
-Quality and speed use different baselines. LPIPS compares each video with an eager BF16 generation
-from the same prompt and seed. Speedup uses compiled dense BF16, whose mean pipeline-forward
-latency is **525.0 seconds** across the seven prompts. For a fair comparison, this excludes
-compilation's own speedup contribution and isolates the three optimizations studied here.
-Compilation can still change kernel fusion and floating-point operation ordering, and those
-numerical differences accumulate through denoising. The compiled dense BF16 point therefore has a
-speedup of `1.00×` but a nonzero mean LPIPS of `0.1181` against eager BF16.
+- **Quality:** LPIPS compares each video with an eager BF16 generation from the same prompt and
+  seed.
+- **Speed:** Speedup compares pipeline-forward latency with compiled dense BF16, whose mean latency
+  is **525.0 seconds** across the seven prompts. This excludes compilation's own speedup and
+  isolates the three optimizations studied here.
+
+Compilation can change kernel fusion and floating-point operation ordering, so compiled dense BF16
+is not numerically identical to eager BF16. It therefore appears at `1.00×` speedup but has a
+nonzero mean LPIPS of `0.1181` against the eager quality baseline.
 
 The 96 configurations are a characterization sweep, not a recommended per-model tuning cost:
 
