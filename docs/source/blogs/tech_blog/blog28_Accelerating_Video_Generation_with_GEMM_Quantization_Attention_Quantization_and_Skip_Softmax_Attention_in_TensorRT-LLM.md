@@ -48,21 +48,18 @@ both numeric precision and scale granularity:
 | FP8 row-wise | FP8 E4M3 / FP8 E4M3 | Per-output-channel weights; per-token activations | Yes ([WIP](https://github.com/NVIDIA/TensorRT-LLM/pull/16847)) | Yes ([WIP](https://github.com/NVIDIA/TensorRT-LLM/pull/16847)) |
 | NVFP4 | FP4 E2M1 / FP4 E2M1 | 16-element blocks with FP8 scale factors | Yes | Yes |
 
-For convenience, the current sweep evaluates dynamic FP8 blockwise and NVFP4 from the same public
-BF16 checkpoint: high-precision weights are quantized while loading the model, and activation
-scales are computed at runtime. This lets the experiment switch GEMM precision through the
-VisualGen configuration without a separate quantized checkpoint. It does not use the published
-[static NVFP4 checkpoint](https://huggingface.co/nvidia/Wan2.2-T2V-A14B-Diffusers-NVFP4).
-The [ModelOpt diffusion PTQ example](https://github.com/NVIDIA/Model-Optimizer/blob/main/examples/diffusers/README.md#post-training-quantization-ptq)
-shows how to calibrate and export static checkpoints with prequantized weights and calibrated
-weight and activation scales. For the same quantization format, offline calibration can better
-preserve accuracy.
+Of the quantization options above, this post evaluates only FP8 blockwise and NVFP4. Both use
+dynamic quantization: high-precision weights are quantized while loading the model, and activation
+scales are computed at runtime.
+[NVIDIA Model Optimizer](https://github.com/NVIDIA/Model-Optimizer) can instead produce statically
+quantized checkpoints with prequantized weights and calibrated weight and activation scales. For
+the same quantization format, offline calibration can better preserve accuracy.
 
 ## Attention Optimizations
 
-Attention offers two complementary levers: quantization makes its matrix multiplications cheaper,
-while Skip Softmax skips exponentiation and the corresponding `P×V` accumulation for rejected
-score blocks.
+There are two orthogonal directions for accelerating attention: quantized attention lowers numeric
+precision, while sparse attention omits contributions from KV blocks with low attention scores,
+saving the corresponding computation.
 
 ### Quantized Attention
 
@@ -78,7 +75,7 @@ the same attention path.
 
 [Skip Softmax Attention](blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.md),
 also called BLASST, keeps the QK calculation but rejects score blocks sufficiently below the
-running maximum. Rejected blocks skip exponentiation and the corresponding value accumulation;
+running maximum. Rejected blocks skip exponentiation and the corresponding `P×V` accumulation;
 the sparsity pattern is determined dynamically rather than stored with the model.
 
 `target_sparsity` controls how aggressively to skip, while `disabled_until_timestep` keeps the
