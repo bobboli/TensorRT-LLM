@@ -168,15 +168,31 @@ Figure 4 compares the generated videos for prompt P1 across the same six GEMM/at
 
 https://github.com/user-attachments/assets/fbcb863e-8f11-4762-b60c-d0fc11f8df2b
 
-The six videos below are grouped by GEMM precision, with the SAGE variant on the right. All six use the **Conservative** Skip Softmax setting (★): `target_sparsity=0.75` and `disabled_until_timestep=0.86`.
+The six videos below are grouped by GEMM precision. Within each group, the SAGE variant follows the result without SAGE. All six use the **Conservative** Skip Softmax setting (★): `target_sparsity=0.75` and `disabled_until_timestep=0.86`.
 
-| BF16 + Skip Softmax (1.10×) | BF16 + SAGE + Skip Softmax (1.19×) |
-| :---: | :---: |
-| https://github.com/user-attachments/assets/1d833893-e171-4050-8235-3a35734df610 | https://github.com/user-attachments/assets/5c0f2d23-e78a-4c49-babb-d14183e2b911 |
-| **FP8 per-tensor + Skip Softmax (1.20×)** | **FP8 per-tensor + SAGE + Skip Softmax (1.35×)** |
-| https://github.com/user-attachments/assets/7bdab69e-8e7c-4de7-a002-cc95b73be1c2 | https://github.com/user-attachments/assets/64308c52-eaa9-49c4-abe2-f413108893e1 |
-| **NVFP4 + Skip Softmax (1.27×)** | **NVFP4 + SAGE + Skip Softmax (1.43×)** |
-| https://github.com/user-attachments/assets/ac275924-d548-46ab-8e7a-199ddda2a1b9 | https://github.com/user-attachments/assets/5f53b411-f928-4a10-84f6-fd85264fba6d |
+**BF16 + Skip Softmax (1.10×)**
+
+https://github.com/user-attachments/assets/1d833893-e171-4050-8235-3a35734df610
+
+**BF16 + SAGE + Skip Softmax (1.19×)**
+
+https://github.com/user-attachments/assets/5c0f2d23-e78a-4c49-babb-d14183e2b911
+
+**FP8 per-tensor + Skip Softmax (1.20×)**
+
+https://github.com/user-attachments/assets/7bdab69e-8e7c-4de7-a002-cc95b73be1c2
+
+**FP8 per-tensor + SAGE + Skip Softmax (1.35×)**
+
+https://github.com/user-attachments/assets/64308c52-eaa9-49c4-abe2-f413108893e1
+
+**NVFP4 + Skip Softmax (1.27×)**
+
+https://github.com/user-attachments/assets/ac275924-d548-46ab-8e7a-199ddda2a1b9
+
+**NVFP4 + SAGE + Skip Softmax (1.43×)**
+
+https://github.com/user-attachments/assets/5f53b411-f928-4a10-84f6-fd85264fba6d
 
 <p align="center"><sub><em>Figure 4. P1 video comparison across the eager BF16 reference and six conservative Skip Softmax configurations.</em></sub></p>
 
