@@ -164,9 +164,9 @@ Figure 3 isolates the attention optimizations within each GEMM precision. Each g
 
 Figure 4 compares the generated videos for prompt P1 across the same six GEMM/attention quantization families used in the frontier. Eager BF16 serves as the visual quality reference, while the speedup labels use compiled dense BF16 as their baseline.
 
-| Eager BF16 reference |
-| :---: |
-| ![Eager BF16 P1 generation](../media/tech_blog28_video_p01_eager_bf16.gif) |
+**Eager BF16 reference**
+
+https://github.com/user-attachments/assets/fbcb863e-8f11-4762-b60c-d0fc11f8df2b
 
 The six videos below are grouped by GEMM precision, with the SAGE variant on the right. All six use the **Conservative** Skip Softmax setting (★): `target_sparsity=0.75` and `disabled_until_timestep=0.86`.
 
