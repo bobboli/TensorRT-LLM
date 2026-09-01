@@ -94,22 +94,23 @@ Skip Softmax Attention works with both the **TRTLLM** and **CUTEDSL** attention 
 
 #### Mapping `disabled_until_timestep` to Actual Denoising Steps
 
-VisualGen passes each transformer a normalized scheduler timestep `t` in `[0, 1]`. Denoising
-proceeds from high to low `t`. For a configured `disabled_until_timestep` value `D`, Skip Softmax
-Attention is disabled while `t >= D` and enabled once `t < D`. Equality therefore belongs to the
-dense phase.
+VisualGen passes each transformer a normalized scheduler timestep `t` in `[0, 1]`. Denoising proceeds from high to low `t`. Skip Softmax Attention is disabled while `t >= disabled_until_timestep` and enabled once `t < disabled_until_timestep`. Equality therefore belongs to the dense phase.
 
-For a scheduler sequence `t[0], ..., t[N-1]`, the number of initial dense-attention steps is the
-number of entries whose normalized timestep is greater than or equal to `D`:
+For a scheduler sequence `t[0], ..., t[N-1]`, the number of initial dense-attention steps is the number of entries whose normalized timestep is greater than or equal to `disabled_until_timestep`:
 
 ```text
 dense_steps = count(t[i] >= disabled_until_timestep)
 skip_softmax_steps = N - dense_steps
 ```
 
-The mapping must be computed from the actual scheduler sequence; `D` is not simply a fraction of
-`N` when the schedule is nonlinear. The 40-step Wan 2.2 UniPC schedule used in the
-video-generation optimization blog has the following mapping:
+The mapping must be computed from the actual scheduler sequence; `disabled_until_timestep` is not simply a fraction of `N` when the schedule is nonlinear. In the 40-step Wan 2.2 UniPC example, `s[i]` is the unshifted normalized flow sigma at denoising step `i`: it represents the base noise level before `flow_shift` is applied. The checkpoint uses 1,000 training timesteps and `flow_shift=3.0`:
+
+```text
+s[i] = 1 - i * (1 - 1/1000) / 40,              i = 0, ..., 39
+shifted_sigma[i] = 3 * s[i] / (1 + 2 * s[i])
+```
+
+The flow shift concentrates timesteps near the high-noise end of the schedule. UniPC converts these shifted sigmas into the normalized runtime timestep sequence `t[i]`. Each row below is obtained from that actual sequence by evaluating `t[i] >= disabled_until_timestep` for all 40 steps and counting how many comparisons are true:
 
 | `disabled_until_timestep` | Initial dense steps | Skip Softmax steps |
 | :---: | ---: | ---: |
@@ -120,10 +121,11 @@ video-generation optimization blog has the following mapping:
 | `0.90` | 10 | 30 |
 | `0.86` | 14 | 26 |
 
-This control is specific to iterative visual generation: the same attention layers run repeatedly
-while the denoising state changes, so early high-noise steps can remain dense before sparsity is
-enabled later. Autoregressive LLM inference has no descending diffusion timestep and therefore no
-equivalent denoising-phase boundary.
+For example, the actual sequence has `t[13]` at approximately `0.861` and `t[14]` at approximately `0.848`. Therefore, `disabled_until_timestep=0.86` is true for `i=0, ..., 13`, giving 14 initial dense steps and 26 Skip Softmax steps.
+
+VisualGen defines this cutoff using the **scheduler-derived normalized timestep** `t[i]`, rather than the **denoising-step index** `i`, so the same configuration interface works across models, schedulers, and different numbers of inference steps while preserving each scheduler's denoising trajectory.
+
+This control is specific to iterative visual generation: the same attention layers run repeatedly while the denoising state changes, so early high-noise steps can remain dense before sparsity is enabled later.
 
 #### Python API
 
