@@ -103,20 +103,22 @@ For a scheduler sequence `t[0], ..., t[N-1]`, the number of initial dense-attent
 number of entries whose normalized timestep is greater than or equal to `D`:
 
 ```text
-dense_warmup_steps = count(t[i] >= disabled_until_timestep)
+dense_steps = count(t[i] >= disabled_until_timestep)
+skip_softmax_steps = N - dense_steps
 ```
 
 The mapping must be computed from the actual scheduler sequence; `D` is not simply a fraction of
-`N` when the schedule is nonlinear. For example, the 50-step Wan 2.2 UniPC schedule used in the
-video-generation optimization blog has the following approximate mapping:
+`N` when the schedule is nonlinear. The 40-step Wan 2.2 UniPC schedule used in the
+video-generation optimization blog has the following mapping:
 
 | `disabled_until_timestep` | Initial dense steps | Skip Softmax steps |
 | :---: | ---: | ---: |
-| `1.00` | 0 | 50 |
-| `0.97` | 4 | 46 |
-| `0.94` | 8 | 42 |
-| `0.90` | 12 | 38 |
-| `0.86` | 16 | 34 |
+| `1.00` | 0 | 40 |
+| `0.97` | 4 | 36 |
+| `0.94` | 7 | 33 |
+| `0.93` | 8 | 32 |
+| `0.90` | 10 | 30 |
+| `0.86` | 14 | 26 |
 
 This control is specific to iterative visual generation: the same attention layers run repeatedly
 while the denoising state changes, so early high-noise steps can remain dense before sparsity is
