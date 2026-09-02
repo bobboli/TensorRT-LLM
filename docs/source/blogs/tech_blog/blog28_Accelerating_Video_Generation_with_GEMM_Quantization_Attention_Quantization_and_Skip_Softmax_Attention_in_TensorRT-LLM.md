@@ -121,7 +121,7 @@ Figure 2 organizes the 96 data points in two levels. Color identifies one of six
 - **Conservative:** `target_sparsity=0.75`, `disabled_until_timestep=0.86`, shown as a star.
 - **Aggressive:** `target_sparsity=0.75`, `disabled_until_timestep=1.00`, shown as a triangle.
 
-The remaining Skip Softmax configurations are circles, and the dashed line traces the global Pareto frontier across all six families.
+The aggressive point shows the upper-speed end of the sweep rather than a recommended setting. The remaining Skip Softmax configurations are circles, and the dashed line traces the global Pareto frontier across all six families.
 
 <p align="center">
   <img src="../media/tech_blog28_quality_speed_frontier.png" alt="Scatter plot of speedup versus mean LPIPS for the Wan 2.2 optimization sweep, with squares for runs without Skip Softmax, stars for conservative configurations, triangles for aggressive configurations, and a dashed global Pareto frontier" width="1080">
@@ -180,7 +180,7 @@ The six videos below are grouped by GEMM precision, with the SAGE variant on the
 
 <p align="center"><sub><em>Figure 4. P1 video comparison across the eager BF16 reference and six conservative Skip Softmax configurations.</em></sub></p>
 
-Figure 5 expands the first-frame comparison to all seven prompts. Each row compares the eager reference with the same six conservative configurations as Figure 4, and each generated frame retains its original 384×216 pixels.
+Figure 5 expands the first-frame comparison to all seven prompts. Each row compares the eager reference with the same six conservative configurations as Figure 4. The previews are downsampled from the original videos.
 
 <p align="center">
   <img src="../media/tech_blog28_visual_comparison_p01_cat_garden.jpg" alt="First-frame comparison for a cat in a sunlit garden, with an eager BF16 reference and six conservative Skip Softmax results across the GEMM and attention configurations" width="1080">
