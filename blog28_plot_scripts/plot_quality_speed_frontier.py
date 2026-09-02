@@ -101,7 +101,7 @@ def plot(data_path: Path, output_path: Path) -> None:
 
     axis.set_xlabel("Speedup", fontsize=15, fontweight="bold", labelpad=14)
     axis.set_ylabel(
-        "Mean LPIPS vs. Eager BF16\n(Lower Is Better)",
+        "Mean LPIPS vs. Compiled BF16\n(Lower Is Better)",
         fontsize=15,
         fontweight="bold",
         labelpad=16,
