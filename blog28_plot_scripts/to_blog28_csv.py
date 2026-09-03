@@ -57,7 +57,17 @@ def main() -> None:
         rows = list(csv.DictReader(handle))
     if not rows:
         raise SystemExit(f"{src} is empty")
-    lp = "lpips_vs_eager_mean7" if "lpips_vs_eager_mean7" in rows[0] else "lpips_mean7"
+    # Accuracy reference is compiled BF16 dense -- the SAME configuration the
+    # speedup baseline uses, so both axes share one reference and the BF16 dense
+    # row is 1.000x / 0.0000 by construction.  Referencing latency to compiled
+    # BF16 but quality to eager BF16 puts the compile-vs-eager delta (a property
+    # of the baseline, not of any candidate) on the quality axis.
+    # Fail rather than fall back: a silent reference swap is invisible in the plot.
+    lp = "lpips_vs_compiled_bf16_mean7"
+    if lp not in rows[0]:
+        raise SystemExit(
+            f"{src} lacks {lp}; use the main collector CSV (sweep_metrics9.csv)."
+        )
     if lp not in rows[0] or "gen_sec_mean" not in rows[0]:
         raise SystemExit(f"{src} lacks LPIPS/latency columns: {list(rows[0])}")
 
